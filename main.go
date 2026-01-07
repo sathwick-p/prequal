@@ -60,11 +60,10 @@ func main() {
 
 	ctrl := controller.NewController(factory, store)
 
-
 	stop := make(chan struct{})
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	go func(){
+	go func() {
 		<-c
 		log.Printf("Shutting Down")
 		close(stop)
@@ -72,7 +71,7 @@ func main() {
 
 	factory.Start(stop)
 
-	if err := ctrl.Run(stop); err!=nil{
+	if err := ctrl.Run(stop); err != nil {
 		log.Fatalf("Error running controller: %v", err)
 	}
 
