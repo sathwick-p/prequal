@@ -70,9 +70,9 @@ func main() {
 	}()
 
 	factory.Start(stop)
-
+	
 	if err := ctrl.Run(stop); err != nil {
 		log.Fatalf("Error running controller: %v", err)
 	}
-
+	
 }
