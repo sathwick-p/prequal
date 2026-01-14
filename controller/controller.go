@@ -6,7 +6,9 @@ import (
 	"sync"
 
 	discovery "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
+	lister "k8s.io/client-go/listers/discovery/v1"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -18,6 +20,7 @@ type BackendIPStore struct {
 type Controller struct {
 	informerFactory informers.SharedInformerFactory
 	store           *BackendIPStore
+	lister          lister.EndpointSliceLister
 }
 
 func NewBackendIPStore() *BackendIPStore {
@@ -30,102 +33,87 @@ func NewController(factory informers.SharedInformerFactory, store *BackendIPStor
 	c := &Controller{
 		informerFactory: factory,
 		store:           store,
+		lister:          factory.Discovery().V1().EndpointSlices().Lister(),
 	}
 
 	endpointsInformer := factory.Discovery().V1().EndpointSlices().Informer()
 
 	endpointsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    c.onAdd,
-		UpdateFunc: c.onUpdate,
-		DeleteFunc: c.onDelete,
+		AddFunc:    c.onEndpointSliceEvent,
+		UpdateFunc: func(_, obj interface{}) { c.onEndpointSliceEvent(obj) },
+		DeleteFunc: c.onEndpointSliceEvent,
 	})
 	return *c
 }
-func (c *Controller) onDelete(obj interface{}) {
+
+func (c *Controller) onEndpointSliceEvent(obj interface{}) {
 	endpoints, ok := obj.(*discovery.EndpointSlice)
+
 	if !ok {
-		cache, ok := obj.(cache.DeletedFinalStateUnknown)
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			return
 		}
-		endpoints, ok = cache.Obj.(*discovery.EndpointSlice)
+		endpoints, ok = tombstone.Obj.(*discovery.EndpointSlice)
 		if !ok {
 			return
 		}
 	}
-	key := fmt.Sprintf("%s/%s", endpoints.Labels["kubernetes.io/service-name"], endpoints.Namespace)
-	val := extractIps(endpoints)
-	c.store.Delete(key, val)
-	log.Printf("[Event] DELETE: %s removed IPs: %v\n", key, val)
-}
-func (c *BackendIPStore) Delete(key string, val []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ipList := c.ips[key]
-	if len(ipList) == 0 {
+
+	serviceName := endpoints.Labels["kubernetes.io/service-name"]
+	if serviceName == "" {
 		return
 	}
 
-	ipSet := make(map[string]struct{}, len(val))
-	for _, v := range val {
-		ipSet[v] = struct{}{}
-	}
-	n := 0
-	for _, v := range ipList {
-		if _, drop := ipSet[v]; !drop {
-			ipList[n] = v
-			n++
-		}
-	}
-	ipList = ipList[:n]
-	if len(ipList) == 0 {
-		delete(c.ips, key)
-		return
-	}
-	c.ips[key] = ipList
-
+	namespace := endpoints.Namespace
+	c.syncServiceEndpoints(namespace, serviceName)
 }
-func (c *Controller) onAdd(obj interface{}) {
-	endpoints, ok := obj.(*discovery.EndpointSlice)
-	if !ok {
+
+func (c *Controller) syncServiceEndpoints(namespace, serviceName string) {
+	selector := labels.SelectorFromSet(labels.Set{
+		"kubernetes.io/service-name": serviceName,
+	})
+
+	// list all endpoint slices matching this service from cache
+
+	slices, err := c.lister.EndpointSlices(namespace).List(selector)
+	if err != nil {
+		log.Printf("[ERROR] Failed to list EndpointSlices for %s/%s: %v\n", namespace, serviceName, err)
 		return
 	}
 
-	key := fmt.Sprintf("%s/%s", endpoints.Labels["kubernetes.io/service-name"], endpoints.Namespace)
-	val := extractIps(endpoints)
-	c.store.Update(key, val)
-	log.Printf("[Event] ADD: %s\n", key)
-}
-
-func (c *Controller) onUpdate(oldObj, obj interface{}) {
-	endpoints, ok := obj.(*discovery.EndpointSlice)
-	if !ok {
-		return
-	}
-
-	key := fmt.Sprintf("%s/%s", endpoints.Labels["kubernetes.io/service-name"], endpoints.Namespace)
-	val := extractIps(endpoints)
-	c.store.Update(key, val)
-	log.Printf("[Event] UPDATE: %s\n", key)
-
-}
-func extractIps(endpoints *discovery.EndpointSlice) []string {
-	var ips []string
-	for _, es := range endpoints.Endpoints {
-		if es.Conditions.Ready != nil && *es.Conditions.Ready {
-			for _, ip := range es.Addresses {
-				ips = append(ips, ip)
+	var allIPs []string
+	for _, slice := range slices {
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.Conditions.Ready != nil && *endpoint.Conditions.Ready {
+				allIPs = append(allIPs, endpoint.Addresses...)
 			}
 		}
 	}
-	return ips
-}
 
-func (c *BackendIPStore) Update(key string, val []string) {
+	key := fmt.Sprintf("%s/%s", serviceName, namespace)
+	if len(allIPs) == 0 {
+		c.store.Delete(key)
+		log.Printf("[SYNC] %s: no ready endpoints\n", key)
+	} else {
+		c.store.Set(key, allIPs)
+		log.Printf("[SYNC] %s: %v\n", key, allIPs)
+	}
+}
+func (c *BackendIPStore) Set(key string, ips []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.ips[key] = val
-	log.Printf("Updated %s: %v\n", key, val)
+	c.ips[key] = ips
+}
+func (c *BackendIPStore) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.ips, key)
+}
+func (c *BackendIPStore) Get(key string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ips[key]
 }
 
 func (c *Controller) Run(stop <-chan struct{}) error {
