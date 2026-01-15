@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
 )
 
 func main() {
@@ -49,16 +50,21 @@ func main() {
 
 	var factory informers.SharedInformerFactory
 	if *namespace != "" {
-		factory = informers.NewSharedInformerFactoryWithOptions(clientset, 30*time.Second, informers.WithNamespace(*namespace))
+		factory = informers.NewSharedInformerFactoryWithOptions(clientset, 60*time.Second, informers.WithNamespace(*namespace))
 		log.Printf("Watching namespace: %s\n", *namespace)
 	} else {
-		factory = informers.NewSharedInformerFactory(clientset, 30*time.Second)
+		factory = informers.NewSharedInformerFactory(clientset, 60*time.Second)
 		log.Printf("Watching all namespaces")
 	}
 
 	store := controller.NewBackendIPStore()
-
-	ctrl := controller.NewController(factory, store)
+	queue := workqueue.NewTypedRateLimitingQueueWithConfig(
+		workqueue.DefaultTypedControllerRateLimiter[string](),
+		workqueue.TypedRateLimitingQueueConfig[string]{
+			Name: "prequal",
+		},
+	)
+	ctrl := controller.NewController(factory, store, queue)
 
 	stop := make(chan struct{})
 	c := make(chan os.Signal, 1)
@@ -70,9 +76,9 @@ func main() {
 	}()
 
 	factory.Start(stop)
-	
-	if err := ctrl.Run(stop); err != nil {
+
+	if err := ctrl.Run(stop, 1); err != nil {
 		log.Fatalf("Error running controller: %v", err)
 	}
-	
+
 }

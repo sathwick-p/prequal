@@ -61,6 +61,39 @@ This is your Go application, running as a Deployment. It has two distinct respon
             ```
     4.  **Update:** It pushes this configuration to the **Data Plane** (usually via a shared thread-safe map or channel).
 
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           INFORMER                                       │
+│  Receives events from K8s API (ADD, UPDATE, DELETE)                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Event Handler (very fast, non-blocking)
+                                    │ Just extracts the key and enqueues it
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          WORKQUEUE                                       │
+│  ┌─────┬─────┬─────┬─────┬─────┐                                        │
+│  │ key │ key │ key │ key │ key │  (rate-limited, deduplicating)         │
+│  └─────┴─────┴─────┴─────┴─────┘                                        │
+│                                                                          │
+│  Features:                                                               │
+│  • Deduplication: same key queued twice = processed once                │
+│  • Rate limiting: prevents thundering herd                              │
+│  • Retry with backoff: failed items get re-queued                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Worker goroutine (started AFTER cache sync)
+                                    │ Pulls keys and processes them
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         PROCESS ITEM                                     │
+│  1. Get key from queue                                                  │
+│  2. Look up object from LISTER (cache) using key                        │
+│  3. Do the actual work (sync endpoints, etc.)                           │
+│  4. Mark Done() or requeue on error                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
 **Responsibility 2: The Data Plane (The Muscle)**
 *   **What it does:** It is the high-performance gRPC/HTTP Proxy server listening on ports 80/443.
 *   **Logic:**

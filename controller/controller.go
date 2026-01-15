@@ -2,14 +2,20 @@ package controller
 
 import (
 	"fmt"
+	"log"
+	"sync"
+	"time"
+
+	discovery "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	discoveryLister "k8s.io/client-go/listers/discovery/v1"
 	networkingLister "k8s.io/client-go/listers/networking/v1"
 	"k8s.io/client-go/tools/cache"
-	"log"
-	"sync"
+	"k8s.io/client-go/util/workqueue"
 )
 
 type BackendIPStore struct {
@@ -22,6 +28,9 @@ type Controller struct {
 	store            *BackendIPStore
 	networkingLister networkingLister.IngressLister
 	discoveryLister  discoveryLister.EndpointSliceLister
+	queue            workqueue.TypedRateLimitingInterface[string]
+	syncMux          sync.RWMutex
+	serviceToIngress map[string][]string
 }
 
 func NewBackendIPStore() *BackendIPStore {
@@ -30,14 +39,21 @@ func NewBackendIPStore() *BackendIPStore {
 	}
 }
 
-func NewController(factory informers.SharedInformerFactory, store *BackendIPStore) Controller {
+func NewController(factory informers.SharedInformerFactory, store *BackendIPStore, queue workqueue.TypedRateLimitingInterface[string]) Controller {
 	c := &Controller{
 		informerFactory:  factory,
 		store:            store,
 		networkingLister: factory.Networking().V1().Ingresses().Lister(),
 		discoveryLister:  factory.Discovery().V1().EndpointSlices().Lister(),
+		queue:            queue,
+		serviceToIngress: make(map[string][]string),
 	}
-
+	endpointSliceInformer := factory.Discovery().V1().EndpointSlices().Informer()
+	endpointSliceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    c.onEndpointSliceEvent,
+		UpdateFunc: func(_, obj interface{}) { c.onEndpointSliceEvent(obj) },
+		DeleteFunc: c.onEndpointSliceEvent,
+	})
 	ingressInformer := factory.Networking().V1().Ingresses().Informer()
 
 	ingressInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -47,18 +63,42 @@ func NewController(factory informers.SharedInformerFactory, store *BackendIPStor
 	})
 	return *c
 }
-func (c *Controller) onIngressEvent(obj interface{}) {
-	ingress, ok := obj.(*networkingv1.Ingress)
+func (c *Controller) onEndpointSliceEvent(obj interface{}) {
+	eps, ok := obj.(*discovery.EndpointSlice)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			return
 		}
-		ingress, ok = tombstone.Obj.(*networkingv1.Ingress)
+		eps, ok = tombstone.Obj.(*discovery.EndpointSlice)
 		if !ok {
 			return
 		}
 	}
+
+	svcName := eps.Labels["kubernetes.io/service-name"]
+	if svcName == "" {
+		return
+	}
+	svcKey := fmt.Sprintf("%s/%s", eps.Namespace, svcName)
+
+	c.syncMux.RLock()
+	ingressKeys := c.serviceToIngress[svcKey]
+	c.syncMux.RUnlock()
+
+	for _, key := range ingressKeys {
+		c.queue.Add(key)
+	}
+}
+func (c *Controller) onIngressEvent(obj interface{}) {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		return
+	}
+	c.queue.Add(key)
+}
+
+func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 	val, ok := ingress.Labels["ingress.class"]
 	if !ok || val != "prequal" {
 		log.Printf("[SKIP] Ingress %s/%s: not our class (got %q)\n", ingress.Namespace, ingress.Name, val)
@@ -86,6 +126,21 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 				continue
 			}
 			syncedServices[serviceName] = true
+			serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
+			ingressKey := fmt.Sprintf("%s/%s", namespace, ingress.Name)
+			c.syncMux.Lock()
+			// Check if this ingress is already in the list
+			found := false
+			for _, k := range c.serviceToIngress[serviceKey] {
+				if k == ingressKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.serviceToIngress[serviceKey] = append(c.serviceToIngress[serviceKey], ingressKey)
+			}
+			c.syncMux.Unlock()
 			log.Printf("[INGRESS] %s/%s -> service: %s\n", ingress.Namespace, ingress.Name, serviceName)
 			c.syncServiceEndpoints(namespace, serviceName)
 		}
@@ -114,7 +169,7 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName string) {
 		}
 	}
 
-	key := fmt.Sprintf("%s/%s", serviceName, namespace)
+	key := fmt.Sprintf("%s/%s", namespace, serviceName)
 	if len(allIPs) == 0 {
 		c.store.Delete(key)
 		log.Printf("[SYNC] %s: no ready endpoints\n", key)
@@ -123,6 +178,7 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName string) {
 		log.Printf("[SYNC] %s: %v\n", key, allIPs)
 	}
 }
+
 func (c *BackendIPStore) Set(key string, ips []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -138,8 +194,17 @@ func (c *BackendIPStore) Get(key string) []string {
 	defer c.mu.RUnlock()
 	return c.ips[key]
 }
-
-func (c *Controller) Run(stop <-chan struct{}) error {
+func (c *Controller) syncAllIngresses() {
+	ingresses, _ := c.networkingLister.List(labels.Everything())
+	for _, ing := range ingresses {
+		key, err := cache.MetaNamespaceKeyFunc(ing)
+		if err != nil {
+			continue
+		}
+		c.queue.Add(key)
+	}
+}
+func (c *Controller) Run(stop <-chan struct{}, workers int) error {
 	log.Println("Starting controller...")
 
 	// Wait for cache to sync before processing
@@ -149,8 +214,73 @@ func (c *Controller) Run(stop <-chan struct{}) error {
 		return fmt.Errorf("failed to sync cache")
 	}
 	log.Println("Cache synced, watching Ingresses...")
+	c.syncAllIngresses()
+	for i := 0; i < workers; i++ {
 
-	// Block until stop signal
+		go wait.Until(c.runWorker, time.Second, stop)
+	}
+	go func() {
+		<-stop
+		c.queue.ShutDown()
+	}()
+
 	<-stop
 	return nil
+}
+
+func (c *Controller) runWorker() {
+	for c.processNextItem() {
+	}
+}
+
+func (c *Controller) processNextItem() bool {
+	key, shutdown := c.queue.Get()
+	if shutdown {
+		return false
+	}
+	defer c.queue.Done(key)
+
+	if err := c.syncKey(key); err != nil {
+		c.queue.AddRateLimited(key)
+		return true
+	}
+
+	c.queue.Forget(key)
+	return true
+}
+
+func (c *Controller) syncKey(key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return err
+	}
+	ingress, err := c.networkingLister.Ingresses(namespace).Get(name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			c.removeIngressFromMapping(key)
+			return nil
+		}
+		return err
+	}
+	c.syncIngress(ingress)
+	return nil
+}
+
+func (c *Controller) removeIngressFromMapping(ingressKey string) {
+	c.syncMux.Lock()
+	defer c.syncMux.Unlock()
+	for svcKey, ingressKeys := range c.serviceToIngress {
+		filtered := make([]string, 0, len(ingressKeys))
+		for _, k := range ingressKeys {
+			if k != ingressKey {
+				filtered = append(filtered, k)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(c.serviceToIngress, svcKey)
+		} else {
+			c.serviceToIngress[svcKey] = filtered
+		}
+	}
+	log.Printf("[CLEANUP] Removed ingress %s from service mappings\n", ingressKey)
 }
