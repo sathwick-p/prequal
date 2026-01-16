@@ -31,6 +31,7 @@ type Controller struct {
 	queue            workqueue.TypedRateLimitingInterface[string]
 	syncMux          sync.RWMutex
 	serviceToIngress map[string][]string
+	router           *Router
 }
 
 func NewBackendIPStore() *BackendIPStore {
@@ -47,6 +48,7 @@ func NewController(factory informers.SharedInformerFactory, store *BackendIPStor
 		discoveryLister:  factory.Discovery().V1().EndpointSlices().Lister(),
 		queue:            queue,
 		serviceToIngress: make(map[string][]string),
+		router:           NewRouter(),
 	}
 	endpointSliceInformer := factory.Discovery().V1().EndpointSlices().Informer()
 	endpointSliceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -100,6 +102,7 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 
 func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 	val, ok := ingress.Labels["ingress.class"]
+	algo, ok := ingress.Annotations["lb/algo"]
 	if !ok || val != "prequal" {
 		log.Printf("[SKIP] Ingress %s/%s: not our class (got %q)\n", ingress.Namespace, ingress.Name, val)
 		return
@@ -112,8 +115,11 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 		if rule.HTTP == nil {
 			continue
 		}
+		ruleHost := rule.Host
 		for _, path := range rule.HTTP.Paths {
 			svc := path.Backend.Service
+			pathType := path.PathType
+			path := path.Path
 			if svc != nil {
 				serviceName = svc.Name
 			} else if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
@@ -142,6 +148,7 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			}
 			c.syncMux.Unlock()
 			log.Printf("[INGRESS] %s/%s -> service: %s\n", ingress.Namespace, ingress.Name, serviceName)
+			c.router.AddRoute(ruleHost, path, pathType, serviceKey, svc.Port.Number, algo)
 			c.syncServiceEndpoints(namespace, serviceName)
 		}
 	}
@@ -258,6 +265,7 @@ func (c *Controller) syncKey(key string) error {
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			c.removeIngressFromMapping(key)
+			c.router.RemoveRoute()
 			return nil
 		}
 		return err
