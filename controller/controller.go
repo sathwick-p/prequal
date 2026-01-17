@@ -93,6 +93,21 @@ func (c *Controller) onEndpointSliceEvent(obj interface{}) {
 	}
 }
 func (c *Controller) onIngressEvent(obj interface{}) {
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		if ingress, ok := tombstone.Obj.(*networkingv1.Ingress); ok {
+			c.handleIngressDeletion(ingress)
+			return
+		}
+	}
+
+	if ingress, ok := obj.(*networkingv1.Ingress); ok {
+		_, err := c.networkingLister.Ingresses(ingress.Namespace).Get(ingress.Name)
+		if apierrors.IsNotFound(err) {
+			c.handleIngressDeletion(ingress)
+			return
+		}
+	}
+
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		return
@@ -100,9 +115,20 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 	c.queue.Add(key)
 }
 
+func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
+	if ingress.Labels["ingress.class"] != "prequal" {
+		return
+	}
+
+	ingressKey := fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name)
+	log.Printf("[DELETE] Ingress %s deleted, cleaning up\n", ingressKey)
+	c.router.RemoveRoute(ingress)
+	c.removeIngressFromMapping(ingressKey)
+
+}
 func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 	val, ok := ingress.Labels["ingress.class"]
-	algo, ok := ingress.Annotations["lb/algo"]
+	algo := ingress.Annotations["lb/algo"]
 	if !ok || val != "prequal" {
 		log.Printf("[SKIP] Ingress %s/%s: not our class (got %q)\n", ingress.Namespace, ingress.Name, val)
 		return
@@ -128,10 +154,6 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			if serviceName == "" {
 				continue
 			}
-			if syncedServices[serviceName] {
-				continue
-			}
-			syncedServices[serviceName] = true
 			serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
 			ingressKey := fmt.Sprintf("%s/%s", namespace, ingress.Name)
 			c.syncMux.Lock()
@@ -148,8 +170,12 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			}
 			c.syncMux.Unlock()
 			log.Printf("[INGRESS] %s/%s -> service: %s\n", ingress.Namespace, ingress.Name, serviceName)
+			log.Printf("[INGRESS] host: %s\n", ruleHost)
 			c.router.AddRoute(ruleHost, path, pathType, serviceKey, svc.Port.Number, algo)
-			c.syncServiceEndpoints(namespace, serviceName)
+			if !syncedServices[serviceName] {
+				syncedServices[serviceName] = true
+				c.syncServiceEndpoints(namespace, serviceName)
+			}
 		}
 	}
 }
@@ -265,7 +291,6 @@ func (c *Controller) syncKey(key string) error {
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			c.removeIngressFromMapping(key)
-			c.router.RemoveRoute()
 			return nil
 		}
 		return err

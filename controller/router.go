@@ -1,8 +1,10 @@
 package controller
 
 import (
-	networkingv1 "k8s.io/api/networking/v1"
+	"log"
 	"sync"
+
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 type Router struct {
@@ -63,28 +65,42 @@ func (r *Router) AddRoute(host string, path string, pathType *networkingv1.PathT
 		Port:      port,
 		Algorithm: algo,
 	})
+	log.Printf("[ROUTER] Added host: %s\n", host)
 	return nil
 }
 
-func (r *Router) RemoveRoute(host string, path string) {
+func (r *Router) RemoveRoute(ingress *networkingv1.Ingress) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	hostConfig, exists := r.routes[host]
-	if !exists {
-		return
-	}
-
-	filtered := make([]*PathConfig, 0, len(hostConfig.Paths))
-	for _, p := range hostConfig.Paths {
-		if p.Path != path {
-			filtered = append(filtered, p)
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
 		}
-	}
 
-	if len(filtered) == 0 {
-		delete(r.routes, host)
-	} else {
-		hostConfig.Paths = filtered
+		host := rule.Host
+		hostconfig, exists := r.routes[host]
+		if !exists {
+			return
+		}
+
+		pathsToRemove := make(map[string]bool)
+		for _, path := range rule.HTTP.Paths {
+			pathsToRemove[path.Path] = true
+		}
+
+		filtered := make([]*PathConfig, 0, len(hostconfig.Paths))
+		for _, p := range hostconfig.Paths {
+			if !pathsToRemove[p.Path] {
+				filtered = append(filtered, p)
+			}
+		}
+
+		if len(filtered) == 0 {
+			delete(r.routes, host)
+			log.Printf("[ROUTER] Removed host: %s\n", host)
+		} else {
+			hostconfig.Paths = filtered
+		}
 	}
 }
