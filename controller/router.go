@@ -104,3 +104,15 @@ func (r *Router) RemoveRoute(ingress *networkingv1.Ingress) {
 		}
 	}
 }
+
+func (r *Router) GetAllRoutes() map[string]*HostConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	copy := make(map[string]*HostConfig)
+	for k, v := range r.routes {
+		copy[k] = v
+	}
+	log.Printf("[DEBUG] Making a copy for Debug server")
+	return copy
+}

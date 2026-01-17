@@ -65,7 +65,7 @@ func main() {
 		},
 	)
 	ctrl := controller.NewController(factory, store, queue)
-
+	StartDebugServer(&ctrl)
 	stop := make(chan struct{})
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)

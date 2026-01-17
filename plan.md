@@ -78,3 +78,7 @@ Before you write the proxy, you need to understand specific gRPC concepts that d
 1.  **This Week:** Build the **Control Plane** (Watcher). Get it to print IPs when you scale pods.
 2.  **Next:** Study `grpc.UnknownServiceHandler` and `StreamDirector`.
 3.  **Then:** Combine them -> The Watcher feeds IPs to the Director.
+
+
+
+1. Currently skipping the process of deleting routes/paths inside the ingress, the full ingress deletion is handeled only path and route deletion is not.

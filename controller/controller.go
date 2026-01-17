@@ -113,6 +113,7 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 		return
 	}
 	c.queue.Add(key)
+	log.Printf("[DEBUG] Added to queue: %s", key)
 }
 
 func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
@@ -316,4 +317,9 @@ func (c *Controller) removeIngressFromMapping(ingressKey string) {
 		}
 	}
 	log.Printf("[CLEANUP] Removed ingress %s from service mappings\n", ingressKey)
+}
+
+
+func (c *Controller) GetRouterSnapshot() map[string]*HostConfig{
+	return c.router.GetAllRoutes()
 }
