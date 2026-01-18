@@ -81,7 +81,7 @@ func (r *Router) RemoveRoute(ingress *networkingv1.Ingress) {
 		host := rule.Host
 		hostconfig, exists := r.routes[host]
 		if !exists {
-			return
+			continue
 		}
 
 		pathsToRemove := make(map[string]bool)
@@ -115,4 +115,9 @@ func (r *Router) GetAllRoutes() map[string]*HostConfig {
 	}
 	log.Printf("[DEBUG] Making a copy for Debug server")
 	return copy
+}
+
+
+func (r *Router) Match(host string, path string) string{
+	// radix tree longest prefix matching implementation
 }
