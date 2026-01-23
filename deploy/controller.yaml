@@ -1,0 +1,92 @@
+# ServiceAccount for the controller
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prequal-controller
+  namespace: default
+---
+# ClusterRole with permissions to watch Ingresses, Services, EndpointSlices
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prequal-controller
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+---
+# Bind the ClusterRole to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prequal-controller
+subjects:
+- kind: ServiceAccount
+  name: prequal-controller
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: prequal-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+# Controller Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prequal-controller
+  namespace: default
+  labels:
+    app: prequal-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prequal-controller
+  template:
+    metadata:
+      labels:
+        app: prequal-controller
+    spec:
+      serviceAccountName: prequal-controller
+      containers:
+      - name: controller
+        image: prequal:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: proxy
+          containerPort: 8080
+        - name: debug
+          containerPort: 8081
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+---
+# Service to expose the controller proxy
+apiVersion: v1
+kind: Service
+metadata:
+  name: prequal-proxy
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: prequal-controller
+  ports:
+  - name: proxy
+    port: 8080
+    targetPort: 8080
+    nodePort: 30080
+  - name: debug
+    port: 8081
+    targetPort: 8081
+    nodePort: 30081
