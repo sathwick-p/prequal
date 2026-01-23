@@ -128,3 +128,17 @@ If you were to distribute this, here is what the installation looks like:
     *   **Config Scale:** One controller can handle hundreds of Ingress rules (routes).
 
 This is the exact architecture used by **Contour (Envoy)**, **NGINX Ingress**, and **Traefik**. You are building a simplified version of these giants, specialized for your custom algorithms.
+
+
+Radix tree implemented looks like this: 
+
+
+            (root)
+           /      \
+        "api"    "health"
+        /           \
+   pathConfig1    pathConfig3
+      |
+    "v2"
+      |
+   pathConfig2

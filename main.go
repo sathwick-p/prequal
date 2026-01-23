@@ -4,6 +4,8 @@ import (
 	"flag"
 	"log"
 	"main/controller"
+	"main/server"
+	"net/http"
 	"os"
 	signal "os/signal"
 	"syscall"
@@ -65,7 +67,16 @@ func main() {
 		},
 	)
 	ctrl := controller.NewController(factory, store, queue)
-	StartDebugServer(&ctrl)
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store)
+	StartDebugServer(ctrl)
+
+	// Start proxy server in background
+	go func() {
+		log.Println("Proxy server listening on :8080")
+		if err := http.ListenAndServe(":8080", proxyServer); err != nil {
+			log.Fatalf("Proxy server error: %v", err)
+		}
+	}()
 	stop := make(chan struct{})
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)

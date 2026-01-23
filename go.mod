@@ -3,6 +3,7 @@ module main
 go 1.25.4
 
 require (
+	github.com/armon/go-radix v1.0.0
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0

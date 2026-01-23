@@ -40,7 +40,7 @@ func NewBackendIPStore() *BackendIPStore {
 	}
 }
 
-func NewController(factory informers.SharedInformerFactory, store *BackendIPStore, queue workqueue.TypedRateLimitingInterface[string]) Controller {
+func NewController(factory informers.SharedInformerFactory, store *BackendIPStore, queue workqueue.TypedRateLimitingInterface[string]) *Controller {
 	c := &Controller{
 		informerFactory:  factory,
 		store:            store,
@@ -63,7 +63,7 @@ func NewController(factory informers.SharedInformerFactory, store *BackendIPStor
 		UpdateFunc: func(_, obj interface{}) { c.onIngressEvent(obj) },
 		DeleteFunc: c.onIngressEvent,
 	})
-	return *c
+	return c
 }
 func (c *Controller) onEndpointSliceEvent(obj interface{}) {
 	eps, ok := obj.(*discovery.EndpointSlice)
@@ -319,7 +319,10 @@ func (c *Controller) removeIngressFromMapping(ingressKey string) {
 	log.Printf("[CLEANUP] Removed ingress %s from service mappings\n", ingressKey)
 }
 
-
-func (c *Controller) GetRouterSnapshot() map[string]*HostConfig{
+func (c *Controller) GetRouterSnapshot() map[string]*HostConfig {
 	return c.router.GetAllRoutes()
+}
+
+func (c *Controller) GetRouter() *Router {
+	return c.router
 }
