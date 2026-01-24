@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/armon/go-radix v1.0.0
+	github.com/prometheus/procfs v0.19.2
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0

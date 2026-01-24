@@ -1,5 +1,5 @@
 # ============================================================
-# API Service - handles /api
+# API Service - handles /api (with Prequal sidecar)
 # ============================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -16,6 +16,7 @@ spec:
         app: api
     spec:
       containers:
+      # Main application container
       - name: echo
         image: ealen/echo-server:latest
         ports:
@@ -25,6 +26,25 @@ spec:
           value: "80"
         - name: SERVICE_NAME
           value: "api-service"
+      # Prequal sidecar - observes connections and serves probe endpoint
+      - name: prequal-sidecar
+        image: prequal-sidecar:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9999
+          name: probe
+        env:
+        - name: TARGET_PORT
+          value: "80" # Port the main app listens on
+        - name: PROBE_PORT
+          value: "9999" # Port to serve probe endpoint
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
 ---
 apiVersion: v1
 kind: Service
@@ -34,8 +54,12 @@ spec:
   selector:
     app: api
   ports:
-  - port: 80
+  - name: http
+    port: 80
     targetPort: 80
+  - name: probe
+    port: 9999
+    targetPort: 9999
 ---
 # ============================================================
 # API V2 Service - handles /api/v2 (longer prefix = higher priority)
