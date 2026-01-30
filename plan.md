@@ -1,3 +1,18 @@
+# Prequal Ingress Controller - Development Plan
+
+## Project Overview
+
+This project implements a custom Kubernetes Ingress Controller with the **Prequal load balancing algorithm** from Google's NSDI'24 paper: "Load is not what you should balance: Introducing Prequal".
+
+**Key Innovation**: Instead of balancing CPU load (which fails under antagonist load), Prequal balances based on:
+- **RIF (Requests-In-Flight)**: Leading indicator of load
+- **Estimated Latency**: Direct measure of what users experience
+
+---
+
+# COMPLETED WORK
+
+## Phase 1: Control Plane (Kubernetes Watcher) ✅ COMPLETE
 
 ### Part 1: The Control Plane (Kubernetes Watcher)
 
@@ -780,3 +795,555 @@ Your ingress controller would:
 | Is this expensive? | No - probes are ~100 bytes, sub-millisecond |
 
 Would you like me to go deeper into the sidecar implementation details, or discuss how the sidecar would track RIF/latency in different modes?
+
+---
+
+# IMPLEMENTATION PROGRESS
+
+## Phase 2: Prequal Sidecar (Observer Mode) ✅ COMPLETE
+
+### What Was Built
+
+A lightweight sidecar container that observes TCP connections via `/proc/net/tcp` and exposes RIF data through a probe endpoint.
+
+### Files Created
+
+```
+probe/
+├── probe.go       # Main sidecar implementation
+└── Dockerfile     # Container build file
+```
+
+### Implementation Details
+
+**probe/probe.go** - Core sidecar logic:
+```go
+// Key structures
+type ProbeResponse struct {
+    RIF       int    `json:"rif"`
+    BackendIP string `json:"backend_ip"`
+    Timestamp int64  `json:"timestamp_ms"`
+}
+
+type Observer struct {
+    targetPort uint64
+    procFS     procfs.FS
+    mu         sync.RWMutex
+    currentRIF int
+    localIP    string
+}
+```
+
+**Features implemented:**
+1. **RIF Tracking via /proc/net/tcp**
+   - Reads `/proc/net/tcp` and `/proc/net/tcp6` every 100ms
+   - Counts ESTABLISHED connections on target port
+   - Uses `github.com/prometheus/procfs` for parsing
+
+2. **HTTP Probe Endpoint**
+   - `GET /probe` → Returns `{rif, backend_ip, timestamp_ms}`
+   - `GET /health` → Health check endpoint
+
+3. **Configuration via Environment Variables**
+   - `TARGET_PORT`: Port to observe (default: 80)
+   - `PROBE_PORT`: Port to serve probe endpoint (default: 9999)
+
+### Deployment Configuration
+
+**test.yaml** - Added sidecar to api-deployment:
+```yaml
+containers:
+- name: echo                    # Main app
+  image: ealen/echo-server:latest
+  ports:
+  - containerPort: 80
+
+- name: prequal-sidecar         # Sidecar
+  image: prequal-sidecar:latest
+  ports:
+  - containerPort: 9999
+  env:
+  - name: TARGET_PORT
+    value: "80"
+  - name: PROBE_PORT
+    value: "9999"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi
+```
+
+**Service updated** to expose both ports:
+```yaml
+ports:
+- name: http
+  port: 80
+  targetPort: 80
+- name: probe
+  port: 9999
+  targetPort: 9999
+```
+
+### Makefile Targets Added
+
+```makefile
+build-sidecar          # Build sidecar binary locally
+docker-build-sidecar   # Build sidecar Docker image
+kind-load-sidecar      # Load sidecar into kind cluster
+kind-load-all          # Build and load all images
+test-probe             # Test probe endpoint on pods
+port-forward-probe     # Port forward to probe endpoint
+```
+
+### Testing Results
+
+**Verified working:**
+- Sidecar starts and reads /proc/net/tcp correctly
+- RIF reflects active connections under load
+- Tested with `hey` load generator:
+  - `hey -n 10000 -c 50 http://localhost:8080/` → RIF shows ~50
+  - Variable concurrency (`-c 10`, `-c 100`) → RIF changes accordingly
+
+**Test commands:**
+```bash
+# Port forward both app and probe
+kubectl port-forward svc/api-service 8080:80 9999:9999
+
+# Watch RIF in real-time
+watch -n 0.2 'curl -s http://localhost:9999/probe'
+
+# Generate variable load
+for c in 10 30 70 20 90 15 50; do
+  hey -c $c -z 3s http://localhost:8080/ > /dev/null 2>&1
+done
+```
+
+---
+
+# FUTURE WORK
+
+## Phase 3: Add Latency Tracking to Sidecar
+
+### Option A: TCP RTT (Simple)
+
+Add TCP RTT measurement using `ss -ti` or netlink sockets:
+
+```go
+type ProbeResponse struct {
+    RIF             int     `json:"rif"`
+    BackendIP       string  `json:"backend_ip"`
+    EstimatedLatency float64 `json:"estimated_latency_ms"`  // NEW
+    LatencySource   string  `json:"latency_source"`         // "tcp_rtt" | "app_metrics"
+    Timestamp       int64   `json:"timestamp_ms"`
+}
+```
+
+**Implementation approach:**
+1. Run `ss -ti 'sport = :80'` to get TCP_INFO
+2. Parse RTT from output: `rtt:0.045/0.022`
+3. Average across active connections
+
+### Option B: eBPF (Advanced, More Accurate)
+
+Replace /proc/net polling with eBPF for event-driven tracking:
+
+**Benefits:**
+- Zero polling overhead
+- Precise connection duration (actual request latency)
+- Captures every connection (no sampling gaps)
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     LINUX KERNEL                                │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ eBPF Programs                                              │ │
+│  │  - tracepoint/sock/inet_sock_set_state                    │ │
+│  │  - Tracks ESTABLISHED → increment RIF                      │ │
+│  │  - Tracks CLOSE → decrement RIF, compute latency          │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                          │                                      │
+│                    eBPF Maps                                    │
+│           ┌──────────────┼──────────────┐                      │
+│           ▼              ▼              ▼                      │
+│    [rif_counter]  [conn_start_times]  [latency_ringbuf]       │
+└───────────────────────────────────────────────────────────────┘
+                           ▲
+                           │ bpf() syscall
+                           │
+┌──────────────────────────┴────────────────────────────────────┐
+│                  USERSPACE (Go + cilium/ebpf)                 │
+│  - Loads eBPF programs                                        │
+│  - Reads maps for /probe endpoint                             │
+│  - Computes latency histogram bucketed by RIF                 │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Required changes:**
+1. Add `bpf/` directory with eBPF C code
+2. Use `cilium/ebpf` library with `bpf2go`
+3. Update Dockerfile for privileged container
+4. Add security context to deployment
+
+---
+
+## Phase 4: Implement Probe Pool in Ingress Controller
+
+### New Package: `loadbalancer/prequal/`
+
+```
+loadbalancer/prequal/
+├── pool.go        # ProbePool - stores probe responses
+├── selector.go    # HCL selection algorithm
+├── prober.go      # Async background probing
+├── config.go      # Configuration struct
+└── prequal.go     # Main PrequalLB type
+```
+
+### Data Structures
+
+```go
+// ProbeEntry represents a single probe response in the pool
+type ProbeEntry struct {
+    BackendIP   string
+    RIF         int
+    Latency     time.Duration
+    ReceivedAt  time.Time
+    UseCount    int
+}
+
+// ProbePool maintains probe responses for a service
+type ProbePool struct {
+    mu          sync.RWMutex
+    entries     []*ProbeEntry
+    maxSize     int           // Default: 16
+    timeout     time.Duration // Default: 1s
+    rifQuantile *RollingQuantile
+}
+
+// PrequalLB is the main load balancer
+type PrequalLB struct {
+    pools       map[string]*ProbePool  // serviceKey -> pool
+    config      Config
+    httpClient  *http.Client
+    probeWG     sync.WaitGroup
+}
+
+// Config holds Prequal configuration
+type Config struct {
+    ProbesPerQuery float64       // r_probe, default: 2
+    PoolSize       int           // default: 16
+    ProbeTimeout   time.Duration // default: 1s
+    QRif           float64       // hot/cold threshold, default: 0.84
+    RemoveRate     float64       // r_remove, default: 0.5
+    ReuseLimit     int           // b_reuse, computed from formula
+    ProbePort      int           // default: 9999
+}
+```
+
+### HCL Selection Algorithm
+
+```go
+func (p *ProbePool) Select() *ProbeEntry {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+    
+    // 1. Filter expired probes
+    p.evictExpired()
+    
+    // 2. Fallback if pool is too small
+    if len(p.entries) < 2 {
+        return nil  // Caller should use random selection
+    }
+    
+    // 3. Compute hot/cold threshold
+    threshold := p.rifQuantile.Quantile(p.config.QRif)
+    
+    // 4. Classify probes
+    var hot, cold []*ProbeEntry
+    for _, e := range p.entries {
+        if e.RIF > threshold {
+            hot = append(hot, e)
+        } else {
+            cold = append(cold, e)
+        }
+    }
+    
+    // 5. HCL selection
+    var selected *ProbeEntry
+    if len(cold) == 0 {
+        // All hot: pick lowest RIF
+        selected = minByRIF(hot)
+    } else {
+        // Has cold: pick lowest latency among cold
+        selected = minByLatency(cold)
+    }
+    
+    // 6. Update selected probe
+    selected.UseCount++
+    selected.RIF++  // We're adding load
+    
+    // 7. Check reuse limit
+    if selected.UseCount >= p.config.ReuseLimit {
+        p.remove(selected)
+    }
+    
+    return selected
+}
+```
+
+### Integration with ProxyServer
+
+**server/server.go** changes:
+
+```go
+type ProxyServer struct {
+    router    *controller.Router
+    ips       *controller.BackendIPStore
+    Transport *http.Transport
+    prequal   *prequal.PrequalLB  // NEW
+}
+
+func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    // ... existing route matching ...
+    
+    backends := p.ips.Get(pathConfig.Key)
+    
+    // Select backend based on algorithm
+    var backend string
+    switch pathConfig.Algorithm {
+    case "prequal":
+        backend = p.prequal.Select(pathConfig.Key, backends)
+        // Trigger async probes
+        go p.prequal.TriggerProbes(pathConfig.Key, backends)
+    case "round-robin":
+        backend = p.roundRobin(pathConfig.Key, backends)
+    default:
+        backend = backends[rand.Intn(len(backends))]
+    }
+    
+    // ... forward request ...
+}
+```
+
+---
+
+## Phase 5: Async Probing System
+
+### Prober Implementation
+
+```go
+// Prober handles async probing of backends
+type Prober struct {
+    pool       *ProbePool
+    backends   []string
+    probePort  int
+    httpClient *http.Client
+    rate       float64  // probes per request
+    
+    probeChan  chan string  // backends to probe
+    stopChan   chan struct{}
+}
+
+func (p *Prober) Start() {
+    go p.probeLoop()
+}
+
+func (p *Prober) probeLoop() {
+    for {
+        select {
+        case backend := <-p.probeChan:
+            p.probeBackend(backend)
+        case <-p.stopChan:
+            return
+        }
+    }
+}
+
+func (p *Prober) probeBackend(backend string) {
+    url := fmt.Sprintf("http://%s:%d/probe", backend, p.probePort)
+    
+    resp, err := p.httpClient.Get(url)
+    if err != nil {
+        return  // Probe failed, skip
+    }
+    defer resp.Body.Close()
+    
+    var probeResp ProbeResponse
+    json.NewDecoder(resp.Body).Decode(&probeResp)
+    
+    entry := &ProbeEntry{
+        BackendIP:  backend,
+        RIF:        probeResp.RIF,
+        Latency:    time.Duration(probeResp.EstimatedLatency) * time.Millisecond,
+        ReceivedAt: time.Now(),
+        UseCount:   0,
+    }
+    
+    p.pool.Add(entry)
+}
+
+func (p *Prober) TriggerProbes(backends []string) {
+    // Select random backends to probe
+    n := int(p.rate)
+    if rand.Float64() < (p.rate - float64(n)) {
+        n++  // Probabilistic rounding
+    }
+    
+    // Shuffle and pick n backends
+    perm := rand.Perm(len(backends))
+    for i := 0; i < n && i < len(backends); i++ {
+        select {
+        case p.probeChan <- backends[perm[i]]:
+        default:
+            // Channel full, skip
+        }
+    }
+}
+```
+
+---
+
+## Phase 6: Configuration via Ingress Annotations
+
+### Annotation Parsing
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app
+  labels:
+    ingress.class: prequal
+  annotations:
+    lb/algo: "prequal"
+    prequal/probes-per-query: "3"
+    prequal/pool-size: "16"
+    prequal/q-rif: "0.84"
+    prequal/probe-timeout: "1s"
+    prequal/probe-port: "9999"
+```
+
+### Controller Changes
+
+```go
+func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
+    // ... existing logic ...
+    
+    // Parse Prequal config from annotations
+    if algo == "prequal" {
+        config := prequal.ParseConfig(ingress.Annotations)
+        c.prequal.UpdateConfig(serviceKey, config)
+    }
+}
+```
+
+---
+
+## Phase 7: Observability & Metrics
+
+### Debug Endpoint Enhancements
+
+Extend `/routes` endpoint to include Prequal stats:
+
+```json
+{
+  "host": "test.example.com",
+  "paths": [{
+    "path": "/api",
+    "algorithm": "prequal",
+    "prequal_stats": {
+      "pool_size": 12,
+      "hot_count": 3,
+      "cold_count": 9,
+      "avg_rif": 15.2,
+      "avg_latency_ms": 23.5,
+      "probes_sent": 1523,
+      "probes_failed": 12
+    }
+  }]
+}
+```
+
+### Prometheus Metrics
+
+```go
+var (
+    probePoolSize = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "prequal_probe_pool_size",
+            Help: "Current size of probe pool",
+        },
+        []string{"service"},
+    )
+    
+    probeLatency = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "prequal_probe_latency_seconds",
+            Help:    "Probe response latency",
+            Buckets: []float64{.001, .005, .01, .025, .05, .1},
+        },
+        []string{"service", "backend"},
+    )
+    
+    selectionDecisions = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "prequal_selection_total",
+            Help: "Number of backend selection decisions",
+        },
+        []string{"service", "result"},  // result: "hot", "cold", "fallback"
+    )
+)
+```
+
+---
+
+## Phase 8: Production Hardening
+
+### Error Handling & Fallbacks
+
+1. **Probe failures**: Skip failed probes, don't add to pool
+2. **Empty pool**: Fall back to random selection
+3. **All backends unhealthy**: Circuit breaker pattern
+4. **Sidecar not deployed**: Detect missing probe port, fall back
+
+### Performance Optimizations
+
+1. **Connection pooling**: Reuse HTTP connections for probes
+2. **Probe batching**: Send multiple probes in parallel
+3. **Pool sharding**: Reduce lock contention for high-traffic services
+
+### Testing
+
+1. **Unit tests**: Pool operations, HCL selection
+2. **Integration tests**: End-to-end with sidecar
+3. **Load tests**: Compare Prequal vs round-robin under load
+4. **Chaos tests**: Sidecar failures, network partitions
+
+---
+
+# IMPLEMENTATION TIMELINE
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Control Plane (K8s Watcher) | ✅ Complete |
+| 2 | Sidecar (Observer Mode, RIF only) | ✅ Complete |
+| 3 | Add Latency Tracking | 🔲 Pending |
+| 4 | Probe Pool in Controller | 🔲 Pending |
+| 5 | Async Probing System | 🔲 Pending |
+| 6 | Ingress Annotation Config | 🔲 Pending |
+| 7 | Observability & Metrics | 🔲 Pending |
+| 8 | Production Hardening | 🔲 Pending |
+
+---
+
+# REFERENCES
+
+- **Paper**: "Load is not what you should balance: Introducing Prequal" (NSDI'24)
+  - https://www.usenix.org/conference/nsdi24/presentation/wydrowski
+- **procfs library**: github.com/prometheus/procfs
+- **eBPF library**: github.com/cilium/ebpf
+- **Load testing**: github.com/rakyll/hey
