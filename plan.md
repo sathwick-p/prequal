@@ -307,6 +307,19 @@ Track RIF and latency from the **proxy side only**:
 
 This is less accurate than server-side tracking but requires no backend changes. It's what NGINX and some other load balancers do.
 
+#### Approach D: Shared Stats Store (Multi-Ingress Friendly)
+If you run **multiple ingress pods**, each instance sees only its own traffic. To get a global view without sidecars, aggregate proxy-side stats in a shared store:
+
+```
+Ingress Pod A ─┐
+Ingress Pod B ─┼──▶ Shared Store (Redis / gossip / CRDT)
+Ingress Pod C ─┘             │
+                              ▼
+                     Global Prequal view
+```
+
+Each ingress publishes per-backend metrics (inflight deltas + latency samples or summaries). All ingresses read the merged view and make decisions using the same pool.
+
 ---
 
 ## Integration Points in Detail
@@ -409,6 +422,28 @@ On probe:
   - Return median of recent latencies
 ```
 
+### Point 6: Shared Stats Aggregation (Option D)
+If using a shared store instead of probes:
+
+```
+1. Ingress receives request
+2. Track inflight/latency locally (same as passive observation)
+3. Periodically publish updates to shared store (e.g., every 100ms)
+4. Read merged stats from store for selection
+```
+
+**Data to publish (per backend):**
+- `inflight_delta` (increment on start, decrement on end)
+- `latency_sample` (bucketed by arrival RIF or quantiles)
+- `timestamp` for TTL/expiry
+
+**Store responsibilities:**
+- Merge inflight deltas across ingresses
+- Maintain rolling latency summaries
+- Expire stale samples (e.g., 1–2s window)
+
+This yields global consistency without changing backend pods.
+
 ---
 
 ## Configuration via Annotations
@@ -483,6 +518,8 @@ Parse these in `syncIngress()` and pass to the Prequal config.
 
 5. **Metrics/Observability**: Expose probe pool stats, selection decisions, latency improvements via your debug server at `:8081`
 
+6. **Global Consistency Strategy**: Backend-side signals vs shared store vs local-only
+
 ---
 
 ## Suggested Implementation Order
@@ -493,11 +530,13 @@ Parse these in `syncIngress()` and pass to the Prequal config.
 
 3. **Implement HCL selection**: Wire it into `ServeHTTP` for routes with `algo: prequal`.
 
-4. **Add async probing**: Background goroutines that probe backends and feed the pool.
+4. **If running multiple ingress pods**: Add **Shared Stats Store (Option D)** to merge global inflight/latency.
 
-5. **Build the sidecar agent**: For accurate server-side RIF and latency tracking.
+5. **Add async probing** (optional if you keep sidecar plan): Background goroutines that probe backends and feed the pool.
 
-6. **Tune parameters**: Test with your workloads to find optimal `Q_RIF`, `r_probe`, etc.
+6. **Build the sidecar agent** (optional): For accurate server-side RIF and latency tracking.
+
+7. **Tune parameters**: Test with your workloads to find optimal `Q_RIF`, `r_probe`, etc.
 
 ---
 
@@ -1333,6 +1372,7 @@ var (
 | 2 | Sidecar (Observer Mode, RIF only) | ✅ Complete |
 | 3 | Add Latency Tracking | 🔲 Pending |
 | 4 | Probe Pool in Controller | 🔲 Pending |
+| 4b | Shared Stats Store (Option D) | 🔲 Pending |
 | 5 | Async Probing System | 🔲 Pending |
 | 6 | Ingress Annotation Config | 🔲 Pending |
 | 7 | Observability & Metrics | 🔲 Pending |
