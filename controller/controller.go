@@ -98,7 +98,7 @@ func (c *Controller) onEndpointSliceEvent(obj interface{}) {
 	svcKey := fmt.Sprintf("%s/%s", eps.Namespace, svcName)
 
 	c.syncMux.RLock()
-	ingressKeys := c.serviceToIngress[svcKey]
+	ingressKeys := append([]string(nil), c.serviceToIngress[svcKey]...)
 	c.syncMux.RUnlock()
 
 	for _, key := range ingressKeys {
@@ -184,21 +184,26 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 		}
 		ruleHost := rule.Host
 		for _, path := range rule.HTTP.Paths {
+			serviceName = ""
 			svc := path.Backend.Service
 			pathType := path.PathType
 			path := path.Path
+			var portNumber int32
+			var portName string
 			if svc != nil {
 				serviceName = svc.Name
+				portNumber = svc.Port.Number
+				portName = svc.Port.Name
 			} else if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
 				serviceName = ingress.Spec.DefaultBackend.Service.Name
+				portNumber = ingress.Spec.DefaultBackend.Service.Port.Number
+				portName = ingress.Spec.DefaultBackend.Service.Port.Name
 			}
 			if serviceName == "" {
 				continue
 			}
 			serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
 			routeKey := serviceKey
-			portNumber := svc.Port.Number
-			portName := svc.Port.Name
 			if portNumber != 0 {
 				routeKey = fmt.Sprintf("%s:%d", serviceKey, portNumber)
 			} else if portName != "" {
@@ -301,7 +306,11 @@ func (c *BackendIPStore) Get(key string) []*Endpoint {
 	return append([]*Endpoint(nil), endpoints...)
 }
 func (c *Controller) syncAllIngresses() {
-	ingresses, _ := c.networkingLister.List(labels.Everything())
+	ingresses, err := c.networkingLister.List(labels.Everything())
+	if err != nil {
+		log.Printf("[ERROR] Failed to list ingresses: %v", err)
+		return
+	}
 	for _, ing := range ingresses {
 		key, err := cache.MetaNamespaceKeyFunc(ing)
 		if err != nil {
