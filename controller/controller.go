@@ -28,6 +28,14 @@ type Endpoint struct {
 	port int32
 }
 
+func (e *Endpoint) Addr() string {
+	return e.addr
+}
+
+func (e *Endpoint) Port() int32 {
+	return e.port
+}
+
 type Controller struct {
 	informerFactory  informers.SharedInformerFactory
 	store            *BackendIPStore
@@ -65,7 +73,7 @@ func NewController(factory informers.SharedInformerFactory, store *BackendIPStor
 
 	ingressInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onIngressEvent,
-		UpdateFunc: func(_, obj interface{}) { c.onIngressEvent(obj) },
+		UpdateFunc: c.onIngressUpdate,
 		DeleteFunc: c.onIngressEvent,
 	})
 	return c
@@ -121,6 +129,33 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 	log.Printf("[DEBUG] Added to queue: %s", key)
 }
 
+func (c *Controller) onIngressUpdate(oldObj, newObj interface{}) {
+	oldIngress, ok := oldObj.(*networkingv1.Ingress)
+	if ok {
+		c.router.RemoveRoute(oldIngress)
+		oldKey, err := cache.MetaNamespaceKeyFunc(oldIngress)
+		if err == nil {
+			c.removeIngressFromMapping(oldKey)
+		}
+	}
+
+	newIngress, ok := newObj.(*networkingv1.Ingress)
+	if !ok {
+		return
+	}
+
+	if newIngress.Labels["ingress.class"] != "prequal" {
+		return
+	}
+
+	key, err := cache.MetaNamespaceKeyFunc(newIngress)
+	if err != nil {
+		return
+	}
+	c.queue.Add(key)
+	log.Printf("[DEBUG] Added to queue: %s", key)
+}
+
 func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
 	if ingress.Labels["ingress.class"] != "prequal" {
 		return
@@ -141,7 +176,7 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 	}
 	log.Printf("[EVENT] Ingress %s/%s triggered\n", ingress.Namespace, ingress.Name)
 	namespace := ingress.Namespace
-	syncedServices := make(map[string]bool)
+	syncedKeys := make(map[string]bool)
 	var serviceName string
 	for _, rule := range ingress.Spec.Rules {
 		if rule.HTTP == nil {
@@ -161,6 +196,14 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 				continue
 			}
 			serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
+			routeKey := serviceKey
+			portNumber := svc.Port.Number
+			portName := svc.Port.Name
+			if portNumber != 0 {
+				routeKey = fmt.Sprintf("%s:%d", serviceKey, portNumber)
+			} else if portName != "" {
+				routeKey = fmt.Sprintf("%s:%s", serviceKey, portName)
+			}
 			ingressKey := fmt.Sprintf("%s/%s", namespace, ingress.Name)
 			c.syncMux.Lock()
 			// Check if this ingress is already in the list
@@ -177,16 +220,16 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			c.syncMux.Unlock()
 			log.Printf("[INGRESS] %s/%s -> service: %s\n", ingress.Namespace, ingress.Name, serviceName)
 			log.Printf("[INGRESS] host: %s\n", ruleHost)
-			c.router.AddRoute(ruleHost, path, pathType, serviceKey, svc.Port.Number, algo)
-			if !syncedServices[serviceName] {
-				syncedServices[serviceName] = true
-				c.syncServiceEndpoints(namespace, serviceName, svc.Port.Number)
+			c.router.AddRoute(ruleHost, path, pathType, routeKey, portNumber, algo)
+			if !syncedKeys[routeKey] {
+				syncedKeys[routeKey] = true
+				c.syncServiceEndpoints(namespace, serviceName, routeKey, portNumber, portName)
 			}
 		}
 	}
 }
 
-func (c *Controller) syncServiceEndpoints(namespace, serviceName string, portNumber int32) {
+func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey string, portNumber int32, portName string) {
 	selector := labels.SelectorFromSet(labels.Set{
 		"kubernetes.io/service-name": serviceName,
 	})
@@ -203,9 +246,18 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName string, portNum
 	for _, slice := range slices {
 		var selectedPort *int32
 		for _, port := range slice.Ports {
-			if port.Port != nil && *port.Port == portNumber {
-				selectedPort = port.Port
-				break
+			if portNumber != 0 {
+				if port.Port != nil && *port.Port == portNumber {
+					selectedPort = port.Port
+					break
+				}
+			} else if portName != "" {
+				if port.Name != nil && *port.Name == portName {
+					if port.Port != nil {
+						selectedPort = port.Port
+						break
+					}
+				}
 			}
 		}
 		if selectedPort == nil {
@@ -223,13 +275,12 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName string, portNum
 		}
 	}
 
-	key := fmt.Sprintf("%s/%s", namespace, serviceName)
 	if len(allEndpoints) == 0 {
-		c.store.Delete(key)
-		log.Printf("[SYNC] %s: no ready endpoints\n", key)
+		c.store.Delete(storeKey)
+		log.Printf("[SYNC] %s: no ready endpoints\n", storeKey)
 	} else {
-		c.store.Set(key, allEndpoints)
-		log.Printf("[SYNC] %s: %v\n", key)
+		c.store.Set(storeKey, allEndpoints)
+		log.Printf("[SYNC] %s: %v\n", storeKey)
 	}
 }
 
@@ -246,7 +297,8 @@ func (c *BackendIPStore) Delete(key string) {
 func (c *BackendIPStore) Get(key string) []*Endpoint {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.ips[key]
+	endpoints := c.ips[key]
+	return append([]*Endpoint(nil), endpoints...)
 }
 func (c *Controller) syncAllIngresses() {
 	ingresses, _ := c.networkingLister.List(labels.Everything())

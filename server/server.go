@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"main/controller"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,7 +58,10 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Select backend (simple: first one for now)
 	backend := backends[0]
-	target := fmt.Sprintf("http://%s:%d", backend, pathConfig.Port)
+	target := fmt.Sprintf(
+		"http://%s",
+		net.JoinHostPort(backend.Addr(), strconv.Itoa(int(backend.Port()))),
+	)
 
 	log.Printf("[PROXY] Forwarding to %s", target)
 
