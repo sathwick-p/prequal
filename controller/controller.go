@@ -20,7 +20,12 @@ import (
 
 type BackendIPStore struct {
 	mu  sync.RWMutex
-	ips map[string][]string
+	ips map[string][]*Endpoint
+}
+
+type Endpoint struct {
+	addr string
+	port int32
 }
 
 type Controller struct {
@@ -36,7 +41,7 @@ type Controller struct {
 
 func NewBackendIPStore() *BackendIPStore {
 	return &BackendIPStore{
-		ips: make(map[string][]string),
+		ips: make(map[string][]*Endpoint),
 	}
 }
 
@@ -175,13 +180,13 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			c.router.AddRoute(ruleHost, path, pathType, serviceKey, svc.Port.Number, algo)
 			if !syncedServices[serviceName] {
 				syncedServices[serviceName] = true
-				c.syncServiceEndpoints(namespace, serviceName)
+				c.syncServiceEndpoints(namespace, serviceName, svc.Port.Number)
 			}
 		}
 	}
 }
 
-func (c *Controller) syncServiceEndpoints(namespace, serviceName string) {
+func (c *Controller) syncServiceEndpoints(namespace, serviceName string, portNumber int32) {
 	selector := labels.SelectorFromSet(labels.Set{
 		"kubernetes.io/service-name": serviceName,
 	})
@@ -194,36 +199,51 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName string) {
 		return
 	}
 
-	var allIPs []string
+	var allEndpoints []*Endpoint
 	for _, slice := range slices {
+		var selectedPort *int32
+		for _, port := range slice.Ports {
+			if port.Port != nil && *port.Port == portNumber {
+				selectedPort = port.Port
+				break
+			}
+		}
+		if selectedPort == nil {
+			continue
+		}
 		for _, endpoint := range slice.Endpoints {
 			if endpoint.Conditions.Ready != nil && *endpoint.Conditions.Ready {
-				allIPs = append(allIPs, endpoint.Addresses...)
+				for _, addr := range endpoint.Addresses {
+					allEndpoints = append(allEndpoints, &Endpoint{
+						addr: addr,
+						port: *selectedPort,
+					})
+				}
 			}
 		}
 	}
 
 	key := fmt.Sprintf("%s/%s", namespace, serviceName)
-	if len(allIPs) == 0 {
+	if len(allEndpoints) == 0 {
 		c.store.Delete(key)
 		log.Printf("[SYNC] %s: no ready endpoints\n", key)
 	} else {
-		c.store.Set(key, allIPs)
-		log.Printf("[SYNC] %s: %v\n", key, allIPs)
+		c.store.Set(key, allEndpoints)
+		log.Printf("[SYNC] %s: %v\n", key)
 	}
 }
 
-func (c *BackendIPStore) Set(key string, ips []string) {
+func (c *BackendIPStore) Set(key string, endpoints []*Endpoint) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.ips[key] = ips
+	c.ips[key] = endpoints
 }
 func (c *BackendIPStore) Delete(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.ips, key)
 }
-func (c *BackendIPStore) Get(key string) []string {
+func (c *BackendIPStore) Get(key string) []*Endpoint {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.ips[key]
@@ -289,6 +309,7 @@ func (c *Controller) syncKey(key string) error {
 		return err
 	}
 	ingress, err := c.networkingLister.Ingresses(namespace).Get(name)
+	// endpointSlice, err := c.discoveryLister.EndpointSlices(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			c.removeIngressFromMapping(key)
