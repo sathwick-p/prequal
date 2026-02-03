@@ -36,6 +36,10 @@ func (e *Endpoint) Port() int32 {
 	return e.port
 }
 
+func (e *Endpoint) String() string {
+	return fmt.Sprintf("%s:%d", e.addr, e.port)
+}
+
 type Controller struct {
 	informerFactory  informers.SharedInformerFactory
 	store            *BackendIPStore
@@ -285,7 +289,7 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey strin
 		log.Printf("[SYNC] %s: no ready endpoints\n", storeKey)
 	} else {
 		c.store.Set(storeKey, allEndpoints)
-		log.Printf("[SYNC] %s: %v\n", storeKey)
+		log.Printf("[SYNC] %s: %+v\n", storeKey, allEndpoints)
 	}
 }
 
