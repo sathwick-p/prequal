@@ -1,1389 +1,1376 @@
-# Prequal Ingress Controller - Development Plan
+# Prequal: Architecture Review, Learning Roadmap, and Implementation Plan
 
-## Project Overview
+## 1. Executive Summary
 
-This project implements a custom Kubernetes Ingress Controller with the **Prequal load balancing algorithm** from Google's NSDI'24 paper: "Load is not what you should balance: Introducing Prequal".
+The project is moving in a valid direction.
 
-**Key Innovation**: Instead of balancing CPU load (which fails under antagonist load), Prequal balances based on:
-- **RIF (Requests-In-Flight)**: Leading indicator of load
-- **Estimated Latency**: Direct measure of what users experience
+You are building a custom Kubernetes ingress controller with:
 
----
+- a control plane that watches cluster state
+- a data plane that routes live traffic
+- room for custom backend-selection algorithms
+- an experimental sidecar/probe mechanism for richer load-balancing signals
 
-# COMPLETED WORK
+That is a strong learning project because it forces you to understand:
 
-## Phase 1: Control Plane (Kubernetes Watcher) ✅ COMPLETE
+- Kubernetes controllers and informers
+- routing and reverse proxies
+- endpoint discovery and reconciliation
+- concurrency in Go
+- observability
+- testing distributed systems
+- performance and scale tradeoffs
 
-### Part 1: The Control Plane (Kubernetes Watcher)
+The high-level architecture is good, but the implementation is still in the "prototype proving the core loop" stage, not the "valid ingress controller" stage yet.
 
-Your goal here is to build a Go program that can "watch" Kubernetes resources and maintain a real-time list of backend IPs in memory.
+Right now the repository proves these ideas:
 
-#### 1. What to Learn / Read
-*   **Kubernetes Client-Go:** This is the official library. You need to understand:
-    *   **Clientset:** How to connect to the cluster (`rest.InClusterConfig`, `kubernetes.NewForConfig`).
-    *   **Informers / SharedInformers:** The event-based mechanism to get updates (Add/Update/Delete) without polling. This is the "magic" of efficient controllers.
-    *   **Listers:** How to retrieve objects from the local cache instead of hitting the API server every time.
-    *   **Workqueues:** (Advanced but recommended) How to handle events safely without blocking the watcher.
+- watch `Ingress` and `EndpointSlice`
+- build an in-memory routing table
+- map routes to backend endpoints
+- proxy live traffic to discovered backends
 
-#### 2. How to Go About It (Implementation Steps)
-Don't worry about gRPC or proxying yet. Just print IP addresses to the console.
+What is still missing is the production-critical layer around that core:
 
-1.  **Project Setup:**
-    *   Initialize a Go module.
-    *   Import `k8s.io/client-go`.
+- clean API boundaries
+- correct ingress-class handling
+- real load-balancing strategies
+- failure handling and health policy
+- proper metrics and observability
+- systematic tests
+- scale and benchmark validation
 
-2.  **Define Your Data Structure:**
-    Create a thread-safe store.
-    ```go
-    type BackendStore struct {
-        mu sync.RWMutex
-        // ServiceName -> []IPs
-        Endpoints map[string][]string
-    }
-    ```
+So the answer is:
 
-3.  **Write the Informer:**
-    *   Create a `SharedInformerFactory`.
-    *   Ask for an informer for `discovery/v1.EndpointSlices` (Avoid `Core/v1.Endpoints` as it's older/slower).
-    *   Add Event Handlers (`AddFunc`, `UpdateFunc`, `DeleteFunc`).
-
-4.  **Handle the Logic:**
-    *   Inside `UpdateFunc`:
-        *   Read the `EndpointSlice` object.
-        *   Loop through `slice.Endpoints`.
-        *   Check `conditions.Ready == true`.
-        *   Extract the IP.
-        *   Update your `BackendStore`.
-        *   `fmt.Printf("Updated IPs for service %s: %v\n", serviceName, ips)`
-
-5.  **Test It:**
-    *   Run this locally using `~/.kube/config`.
-    *   Scale a deployment in your cluster (`kubectl scale deploy/my-app --replicas=5`).
-    *   Watch your console logs print the new IPs instantly.
+- direction: correct
+- architecture: valid as a foundation
+- current implementation: underbuilt relative to the stated ambition
+- next move: harden the core before adding advanced algorithm ideas
 
 ---
 
-### Part 2: Preparing for the Data Plane (gRPC)
+## 2. Current Repository Assessment
 
-Before you write the proxy, you need to understand specific gRPC concepts that differ from standard REST.
+## What exists today
 
-#### 1. Core Concepts to Learn
-*   **Protocol Buffers (Protobuf):** Understand how data is serialized.
-*   **Services & Methods:** How gRPC structures APIs (e.g., `package.Service/Method`).
-*   **Metadata:** The "Headers" of gRPC. This is where you will find authentication tokens or custom keys (like `user-id`) for your load balancing algo.
-*   **Interceptors:** Middleware. You can attach code to run *before* a request is handled. This is often where simple logging or auth happens, though for a *proxy*, we go deeper.
+- `main.go` wires informers, queue, controller, proxy server, and debug server.
+- `controller/controller.go` performs reconciliation from `Ingress` and `EndpointSlice` state into:
+  - a route table
+  - a backend endpoint store
+  - a service-to-ingress mapping for resync triggers
+- `controller/router.go` provides host + path matching using a radix tree.
+- `server/server.go` proxies requests to the selected backend.
+- `probe/probe.go` is a sidecar-style observer for connection information.
+- `deploy/controller.yaml` and `test.yaml` provide a basic Kubernetes deployment story.
 
-#### 2. The Advanced Stuff (Crucial for Proxying)
-*   **`grpc.UnknownServiceHandler`:**
-    *   Normally, gRPC servers reject calls to methods they don't know.
-    *   You need to learn how to catch *everything* so you can forward it without knowing the schema.
-*   **`grpc.Codec` (Custom Codec):**
-    *   By default, gRPC tries to decode the Protobuf message.
-    *   For a transparent proxy, you *don't* want to decode it (you don't have the `.proto` file!). You want to pass the raw bytes. You need to learn how to use a "Proxy Codec" that just copies bytes.
-*   **Context (`context.Context`):**
-    *   This carries deadlines (timeouts) and cancellations.
-    *   If the client cancels the request, your proxy must cancel the request to the backend.
+## What is good
 
-#### 3. Recommended Reading / Resources
-*   **Official gRPC Go Guide:** Start with the "Basics" and "Interceptors" sections.
-*   **`mwitkow/grpc-proxy`:** This is an open-source library that implements a transparent gRPC proxy. **Read the source code.** It is the gold standard for this pattern. You will see exactly how they handle the `StreamHandler` and `Director` functions.
-*   **"gRPC Internals" Blog Posts:** Look for articles explaining HTTP/2 framing and how gRPC multiplexes requests.
+- The split between controller/router/backend store/proxy is sensible.
+- Using informer caches plus a workqueue is the right controller pattern.
+- Using `EndpointSlice` instead of old `Endpoints` is the correct modern choice.
+- Using a radix tree for longest-prefix path matching is a good direction.
+- A separate probe process is a reasonable experiment if you want richer balancing signals later.
 
-### Summary Plan
-1.  **This Week:** Build the **Control Plane** (Watcher). Get it to print IPs when you scale pods.
-2.  **Next:** Study `grpc.UnknownServiceHandler` and `StreamDirector`.
-3.  **Then:** Combine them -> The Watcher feeds IPs to the Director.
+## What is weak or incomplete
 
-
-
-1. Currently skipping the process of deleting routes/paths inside the ingress, the full ingress deletion is handeled only path and route deletion is not.
-
-
-
---- PREQUAL PLAN ---
-
+- Ingress class handling is non-standard: the code uses `metadata.labels["ingress.class"]` instead of `spec.ingressClassName` and/or the legacy annotation.
+- The proxy always chooses the first backend, so the system is not yet a load balancer in practice.
+- There is no explicit algorithm interface yet, even though the architecture aims to support multiple strategies.
+- Backend state is only endpoint-address based; there is no health, latency, inflight, or readiness model beyond EndpointSlice readiness.
+- The route and store models are tightly coupled to current implementation details.
+- There are no unit, integration, or e2e tests.
+- There is no metrics pipeline for controller reconciliation or proxy traffic.
+- Multi-replica controller behavior and data-plane scale behavior have not been validated.
 
 ---
 
-# Integrating Prequal with Your Ingress Controller
+## 3. Is The Architecture Valid?
 
-## Current Architecture Overview
+## Short answer
 
-Your codebase is a **Kubernetes Ingress Controller** with:
+Yes, with one important clarification:
 
-| Component | File | Role |
-|-----------|------|------|
-| **Controller** | `controller/controller.go` | Watches K8s Ingresses & EndpointSlices, maintains backend IP list |
-| **Router** | `controller/router.go` | Path matching via radix tree, stores algorithm config per route |
-| **ProxyServer** | `server/server.go` | HTTP reverse proxy, forwards requests to backends |
-| **BackendIPStore** | `controller/controller.go` | Thread-safe map of `service -> []IP` |
+You are not yet building a full "Ingress Controller competitor". You are building a custom ingress gateway/controller prototype that can evolve into one.
 
-**Current load balancing**: Essentially none - line 58 of `server/server.go` just picks `backends[0]`:
+That is the right scope.
+
+## Why the architecture is valid
+
+The control-plane/data-plane split is correct:
+
+- control plane:
+  - watch Kubernetes resources
+  - reconcile desired routing state
+  - publish immutable-ish routing/backend config into memory
+- data plane:
+  - perform request matching
+  - select a backend
+  - proxy traffic efficiently
+
+This is how serious systems are structured conceptually, even if mature projects split responsibilities across separate components or embed Envoy/NGINX instead of using Go's `ReverseProxy`.
+
+## Why the architecture is not yet complete
+
+The architecture notes in `arch.md` are ahead of the code. The current repo does not yet fully implement:
+
+- standard ingress API semantics
+- robust reconciliation model
+- pluggable balancing algorithms
+- health-aware endpoint selection
+- observability and operator-facing debugging
+- correctness tests around routing precedence and updates
+- scale behavior under churn
+
+That is fine. It means your next step should be "finish the core platform shape", not "jump to fancy algorithms first".
+
+---
+
+## 4. Architectural Judgment: What To Keep, What To Change
+
+## Keep
+
+- informer + workqueue controller model
+- in-memory routing state
+- separate router abstraction
+- separate proxy abstraction
+- `EndpointSlice`-driven backend discovery
+- sidecar/probe as an experiment, not as a hard dependency for the first stable version
+
+## Change
+
+- introduce explicit internal domain models instead of passing Kubernetes objects deep into routing logic
+- introduce a selector/algorithm interface now, before adding more balancing behavior
+- treat the sidecar signal as optional metadata, not required for correctness
+- formalize config ownership:
+  - ingress parsing
+  - endpoint resolution
+  - routing state publication
+  - backend selection
+  - proxying
+- add observability before adding advanced heuristics
+
+## Architectural target after the next major phase
+
+Aim for these packages/concepts:
+
+- `controller/`
+  - watchers, queue workers, reconciliation
+- `routing/`
+  - host/path matching and route table
+- `discovery/`
+  - endpoint resolution and endpoint metadata normalization
+- `balancer/`
+  - interfaces and algorithms
+- `proxy/`
+  - request forwarding and transport behavior
+- `observability/`
+  - metrics, logs, health/debug endpoints
+
+You do not need to do a full package split immediately, but your code changes should move toward these boundaries.
+
+---
+
+## 5. Key Risks In The Current Code
+
+These are the most important issues to address next.
+
+### 5.1 Ingress API semantics are not correct yet
+
+Current code filters using a label named `ingress.class`. That is not how ingress class is typically expressed.
+
+You should support:
+
+- `spec.ingressClassName`
+- optionally the legacy annotation `kubernetes.io/ingress.class`
+
+Why this matters:
+
+- correctness
+- compatibility with normal Kubernetes usage
+- easier testing with standard manifests
+
+### 5.2 The system does not really load balance yet
+
+`server/server.go` always forwards to `backends[0]`.
+
+That means:
+
+- no fairness
+- no algorithm behavior
+- no resilience to uneven load
+- no validation of the core product idea
+
+### 5.3 Reconciliation and state publication need stronger modeling
+
+Today the controller updates router state and endpoint state as separate mutable structures.
+
+This works for a prototype, but it becomes fragile when you add:
+
+- multiple algorithms
+- metadata-driven endpoint selection
+- retries
+- richer routing rules
+
+The next version should move toward a clearer internal model such as:
+
+- `Route`
+- `BackendSet`
+- `EndpointMetadata`
+- `SelectionPolicy`
+
+### 5.4 Testing is effectively absent
+
+`go test ./...` passes because there are no tests.
+
+That is the largest project risk right now because controllers and routing code fail in edge cases, not only in happy paths.
+
+### 5.5 The sidecar/probe idea is promising but premature as a primary mechanism
+
+The sidecar currently exposes observed connection stats, which could be useful.
+
+But if you push too hard on this too early, you risk spending time on:
+
+- noisy signals
+- consistency issues
+- probe polling complexity
+- coupling traffic policy to pod-local observations before the base system is stable
+
+Use it later as an enhancement layer.
+
+---
+
+## 6. What To Implement Next
+
+The next direction should be:
+
+## Phase 1: Stabilize the core controller and proxy
+
+Implement the minimum system that is correct, testable, and extensible:
+
+- standard ingress-class handling
+- explicit route model
+- explicit backend-selection interface
+- round-robin algorithm first
+- deterministic router tests
+- controller reconciliation tests
+- proxy integration tests
+- Prometheus metrics and structured logs
+
+Do not make the probe sidecar central yet.
+
+## Phase 2: Add algorithmic value safely
+
+After the core works:
+
+- least-connections
+- random-two-choices
+- optional sticky routing / hash-based selection
+- endpoint metadata and live counters
+
+Only after this should you attempt:
+
+- sidecar-informed balancing
+- EWMA latency based selection
+- prequalification logic driven by probe data
+
+## Phase 3: Validate scale and operator experience
+
+- churn tests
+- higher route counts
+- multiple services and hosts
+- replica behavior
+- benchmark reconciliation latency
+- benchmark request throughput and tail latency
+
+---
+
+## 7. Detailed Learning Plan
+
+This section is about what you should learn in parallel with implementation.
+
+## Learning Track A: Kubernetes controllers
+
+### Learn
+
+- informer lifecycle
+- listers vs direct client calls
+- workqueue semantics
+- reconciliation loops
+- idempotent sync functions
+- tombstones and delete handling
+- cache sync guarantees
+
+### Learn it by doing
+
+- trace the current event flow from informer event to queue to `syncKey`
+- write tests that feed fake ingress and endpointslice objects into the controller logic
+- simulate add/update/delete events and verify route/backend state
+
+### Outcome you should reach
+
+You should be able to explain:
+
+- why controllers queue keys instead of doing work directly in event handlers
+- why reconciliation must be idempotent
+- how informer cache state differs from live API state
+
+## Learning Track B: Kubernetes ingress semantics
+
+### Learn
+
+- `Ingress` rule structure
+- path precedence rules
+- exact vs prefix matching
+- default backends
+- `IngressClass`
+- legacy vs current ingress-class handling
+
+### Learn it by doing
+
+- create a matrix of ingress manifests for host/path cases
+- turn that matrix into unit and integration tests
+- compare your router behavior with expected Kubernetes semantics
+
+### Outcome you should reach
+
+You should be able to state exactly how these should behave:
+
+- `/api` vs `/api/v2`
+- exact match `/health`
+- empty host / default host
+- default backend fallback
+
+## Learning Track C: Go concurrency and state management
+
+### Learn
+
+- mutex design
+- copy-on-read vs copy-on-write
+- immutability as a concurrency simplifier
+- data races in shared maps/slices
+- goroutine lifecycle and shutdown
+
+### Learn it by doing
+
+- run tests with `go test -race ./...`
+- refactor state publication so readers see coherent snapshots
+- write tests around concurrent route reads and controller updates
+
+### Outcome you should reach
+
+You should be able to defend why your shared-state design is safe under concurrent traffic and reconciliation.
+
+## Learning Track D: Reverse proxy and transport behavior
+
+### Learn
+
+- `httputil.ReverseProxy`
+- connection reuse
+- transport tuning
+- timeout settings
+- retry boundaries
+- header forwarding and `X-Forwarded-*`
+
+### Learn it by doing
+
+- add request timeout and transport configuration tests
+- inspect how upstream errors propagate
+- test backend failures and connection reuse behavior
+
+### Outcome you should reach
+
+You should understand the difference between:
+
+- route selection
+- connection management
+- request forwarding
+- upstream failure handling
+
+## Learning Track E: Load-balancing algorithms
+
+### Learn
+
+- round robin
+- least connections
+- power of two choices
+- consistent hashing
+- EWMA latency selection
+- stickiness tradeoffs
+
+### Learn it by doing
+
+- start with a tiny `Selector` interface
+- write deterministic tests per algorithm
+- measure distribution fairness under simulated request patterns
+
+### Outcome you should reach
+
+You should be able to explain when each algorithm is better or worse.
+
+## Learning Track F: Observability and scale testing
+
+### Learn
+
+- Prometheus metric types
+- RED/USE metrics
+- controller metrics
+- p50/p95/p99 latency
+- load generation
+- benchmark design
+
+### Learn it by doing
+
+- expose request, backend, and reconciliation metrics
+- load test with `hey`, `vegeta`, or `k6`
+- record routing behavior under backend churn
+
+### Outcome you should reach
+
+You should be able to answer:
+
+- how many routes/endpoints can this handle?
+- what happens during endpoint churn?
+- what is the latency overhead of the proxy?
+
+---
+
+## 8. Implementation Roadmap
+
+This roadmap is ordered for learning value and engineering correctness.
+
+## Milestone 1: Make routing semantics correct
+
+### Goals
+
+- support real ingress-class semantics
+- make route matching deterministic and test-covered
+- handle host/path/default backend behavior cleanly
+
+### Tasks
+
+- add ingress parsing helpers:
+  - extract class
+  - extract rules
+  - normalize backend service references
+- define internal route structs independent from raw Kubernetes types
+- improve router semantics for:
+  - exact match
+  - longest prefix
+  - default host
+  - default backend handling
+- add unit tests for routing precedence
+
+### What to learn while doing it
+
+- ingress API
+- router design
+- table-driven testing in Go
+
+### Exit criteria
+
+- route tests cover all path precedence cases in `test.yaml` plus additional edge cases
+- ingress manifests using `spec.ingressClassName` are supported
+- route behavior is deterministic and documented
+
+## Milestone 2: Introduce a real balancing abstraction
+
+### Goals
+
+- stop hardcoding `backends[0]`
+- make algorithm implementation a first-class concept
+
+### Tasks
+
+- create a `Selector` or `Balancer` interface
+- implement `round_robin`
+- attach algorithm selection to route config
+- keep algorithm state separate from raw endpoint storage
+- add deterministic tests for backend selection
+
+### Suggested interface shape
 
 ```go
-backend := backends[0]
-```
-
-You already have the infrastructure for algorithm selection (`PathConfig.Algorithm` and the `lb/algo` annotation), but it's not wired up yet.
-
----
-
-## Integration Strategy
-
-Prequal fits naturally into your architecture as a **new load balancing strategy** that the `ProxyServer` can use when `Algorithm == "prequal"`.
-
-### High-Level Component Mapping
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    YOUR EXISTING ARCHITECTURE                           │
-│                                                                         │
-│  ┌─────────────┐      ┌──────────────┐      ┌─────────────────────┐   │
-│  │ Controller  │─────▶│ Router       │─────▶│ ProxyServer         │   │
-│  │ (K8s watch) │      │ (path match) │      │ (reverse proxy)     │   │
-│  └─────────────┘      └──────────────┘      └─────────────────────┘   │
-│         │                                            │                 │
-│         ▼                                            ▼                 │
-│  ┌─────────────┐                            ┌─────────────────────┐   │
-│  │BackendIPStore│                            │ CURRENT: backends[0]│   │
-│  │ svc -> []IP │                            │ NEW: Prequal select │   │
-│  └─────────────┘                            └─────────────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    PREQUAL COMPONENTS TO ADD                            │
-│                                                                         │
-│  CLIENT SIDE (in your proxy):                                          │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │
-│  │ ProbePool        │  │ ProbeManager     │  │ HCLSelector          │ │
-│  │ (per service)    │  │ (async probing)  │  │ (replica selection)  │ │
-│  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │
-│                                                                         │
-│  SERVER SIDE (new lightweight endpoint on backends):                   │
-│  ┌──────────────────┐  ┌──────────────────┐                           │
-│  │ RIF Counter      │  │ Latency Estimator│                           │
-│  └──────────────────┘  └──────────────────┘                           │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## New Data Structures Needed
-
-### 1. Probe Response
-
-This represents what a backend returns when probed:
-
-```
-ProbeResponse:
-  - BackendIP: string        // Which backend responded
-  - RIF: int                 // Current requests-in-flight
-  - EstimatedLatency: time.Duration
-  - ReceivedAt: time.Time    // When we got this response
-  - UseCount: int            // How many times we've used this probe
-```
-
-### 2. Probe Pool (per service/backend-group)
-
-Each service (e.g., `default/backend-svc`) needs its own probe pool:
-
-```
-ProbePool:
-  - entries: []ProbeResponse  // Max 16 entries
-  - maxSize: 16
-  - timeout: 1s
-  - rifDistribution: RollingQuantile  // To compute hot/cold threshold
-  - mu: sync.RWMutex
-```
-
-### 3. Prequal Load Balancer
-
-Wraps the pool and selection logic:
-
-```
-PrequalLB:
-  - pools: map[string]*ProbePool  // service key -> pool
-  - config: PrequalConfig
-      - ProbesPerQuery: float64    // r_probe, default 2-3
-      - PoolSize: int              // default 16
-      - ProbeTimeout: time.Duration
-      - QRif: float64              // hot/cold threshold quantile (0.6-0.9)
-      - RemoveRate: float64        // r_remove
-      - ReuseLimit: int            // b_reuse
-```
-
----
-
-## Where Each Component Lives
-
-### 1. New Package: `balancer/prequal/`
-
-Create a new package to encapsulate Prequal logic:
-
-```
-balancer/
-  prequal/
-    pool.go         // ProbePool implementation
-    selector.go     // HCL selection logic
-    prober.go       // Async probe sender
-    latency.go      // RIF distribution tracker
-    config.go       // Configuration struct
-    prequal.go      // Main PrequalLB type
-```
-
-### 2. Modifications to Existing Files
-
-**`server/server.go`** - Add balancer dispatch:
-
-Currently at line 57-58 you have:
-```go
-// 4. Select backend (simple: first one for now)
-backend := backends[0]
-```
-
-This becomes a dispatch based on `pathConfig.Algorithm`:
-
-```
-switch pathConfig.Algorithm:
-  case "prequal":
-    backend = prequal.Select(pathConfig.Key, backends)
-  case "round-robin":
-    backend = roundrobin.Select(...)
-  default:
-    backend = backends[0]
-```
-
-**`controller/controller.go`** - Initialize Prequal pools:
-
-When `syncServiceEndpoints` updates the backend IPs, it should also notify the Prequal subsystem to update its pool for that service (add new backends, remove stale ones).
-
----
-
-## The Probing Mechanism
-
-### Challenge: Your Backends Don't Speak "Probe"
-
-Prequal requires backends to respond to probe requests with RIF and latency data. Your current architecture just has a list of IPs - the backends are opaque.
-
-### Two Approaches
-
-#### Approach A: Sidecar/Agent Pattern (Recommended)
-
-Deploy a lightweight **Prequal agent** as a sidecar in each backend pod:
-
-```
-Backend Pod:
-  ┌─────────────────────────────────────────┐
-  │ Container 1: Your App (port 8080)       │
-  │ Container 2: Prequal Agent (port 9999)  │──▶ Exposes /probe endpoint
-  │              - Tracks RIF               │
-  │              - Estimates latency        │
-  └─────────────────────────────────────────┘
-```
-
-The agent:
-- Intercepts requests (or uses eBPF/kernel stats) to track RIF
-- Maintains latency statistics bucketed by RIF
-- Exposes a `/probe` or gRPC endpoint that returns `{rif: 5, latency_ms: 23}`
-
-Your ingress controller probes `backend-ip:9999/probe` instead of the main app port.
-
-#### Approach B: Application-Integrated
-
-Require backend applications to expose a probe endpoint themselves. This is simpler but requires app changes:
-
-```
-GET /prequal/probe
-Response: {"rif": 5, "estimated_latency_ms": 23}
-```
-
-#### Approach C: Passive Observation (Limited)
-
-Track RIF and latency from the **proxy side only**:
-- RIF: Count of in-flight requests per backend (you track this in the proxy)
-- Latency: Observe actual response times
-
-This is less accurate than server-side tracking but requires no backend changes. It's what NGINX and some other load balancers do.
-
-#### Approach D: Shared Stats Store (Multi-Ingress Friendly)
-If you run **multiple ingress pods**, each instance sees only its own traffic. To get a global view without sidecars, aggregate proxy-side stats in a shared store:
-
-```
-Ingress Pod A ─┐
-Ingress Pod B ─┼──▶ Shared Store (Redis / gossip / CRDT)
-Ingress Pod C ─┘             │
-                              ▼
-                     Global Prequal view
-```
-
-Each ingress publishes per-backend metrics (inflight deltas + latency samples or summaries). All ingresses read the merged view and make decisions using the same pool.
-
----
-
-## Integration Points in Detail
-
-### Point 1: Probe Sending (Async Background Goroutines)
-
-When to probe:
-- Triggered by incoming requests (send `r_probe` probes per query)
-- Minimum probe rate when idle (to keep pools fresh)
-
-Where this happens:
-- New goroutine pool managed by `PrequalLB`
-- Started when the `ProxyServer` initializes
-
-Flow:
-```
-Request arrives
-    │
-    ├──▶ [Async] Send r_probe probes to random backends
-    │           └──▶ HTTP GET backend:9999/probe
-    │           └──▶ Parse response
-    │           └──▶ Add to ProbePool
-    │
-    └──▶ [Sync] Select backend from existing pool
-              └──▶ Return selected backend IP
-```
-
-### Point 2: Probe Pool Management
-
-The pool needs lifecycle management:
-
-**On probe response received:**
-1. If pool is full, evict oldest probe
-2. Add new probe to pool
-3. Update RIF distribution estimate
-
-**On each request:**
-1. If pool size < 2, fall back to random selection
-2. Select using HCL rule
-3. Mark probe as used (increment `UseCount`)
-4. If `UseCount >= ReuseLimit`, remove probe
-5. Periodically remove worst probe (rate: `r_remove`)
-
-**Background cleanup:**
-- Evict probes older than timeout (1 second)
-
-### Point 3: The HCL Selection (in `selector.go`)
-
-```
-func (p *ProbePool) SelectBackend() string:
-    1. Filter out expired probes
-    2. If pool empty, return random backend
-    3. Compute hot/cold threshold from RIF distribution
-    4. Classify each probe as hot or cold
-    5. If all probes are hot:
-         return probe with lowest RIF
-       Else:
-         among cold probes, return one with lowest latency
-    6. Increment selected probe's UseCount
-    7. Increment selected probe's RIF (we're adding load)
-```
-
-### Point 4: Backend IP Updates
-
-When the Controller detects endpoint changes:
-
-```
-syncServiceEndpoints() called
-    │
-    ├──▶ Update BackendIPStore (existing)
-    │
-    └──▶ Notify PrequalLB of backend change
-              └──▶ Add new backends to pool candidates
-              └──▶ Remove probes for deleted backends
-```
-
-### Point 5: Server-Side (If Using Sidecar)
-
-The Prequal agent/sidecar needs:
-
-**RIF Tracking:**
-```
-Atomic counter
-  - Increment on request start
-  - Decrement on request end
-  - Probe reads current value
-```
-
-**Latency Estimation:**
-```
-Data structure: map[int]RingBuffer  // RIF bucket -> recent latencies
-
-On request complete:
-  - Record (arrival_rif, latency) pair
-  - Store in ring buffer for that RIF bucket
-
-On probe:
-  - Current RIF = 5
-  - Look up RIF bucket 5 (or nearby)
-  - Return median of recent latencies
-```
-
-### Point 6: Shared Stats Aggregation (Option D)
-If using a shared store instead of probes:
-
-```
-1. Ingress receives request
-2. Track inflight/latency locally (same as passive observation)
-3. Periodically publish updates to shared store (e.g., every 100ms)
-4. Read merged stats from store for selection
-```
-
-**Data to publish (per backend):**
-- `inflight_delta` (increment on start, decrement on end)
-- `latency_sample` (bucketed by arrival RIF or quantiles)
-- `timestamp` for TTL/expiry
-
-**Store responsibilities:**
-- Merge inflight deltas across ingresses
-- Maintain rolling latency summaries
-- Expire stale samples (e.g., 1–2s window)
-
-This yields global consistency without changing backend pods.
-
----
-
-## Configuration via Annotations
-
-Extend your annotation support to configure Prequal:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app
-  labels:
-    ingress.class: prequal
-  annotations:
-    lb/algo: "prequal"
-    prequal/probes-per-query: "3"
-    prequal/pool-size: "16"
-    prequal/q-rif: "0.84"
-    prequal/probe-timeout: "1s"
-spec:
-  rules:
-    - host: app.example.com
-      http:
-        paths:
-          - path: /
-            backend:
-              service:
-                name: backend-svc
-                port:
-                  number: 8080
-```
-
-Parse these in `syncIngress()` and pass to the Prequal config.
-
----
-
-## Request Flow After Integration
-
-```
-1. HTTP Request arrives at ProxyServer.ServeHTTP()
-         │
-2. Router.Match(host, path) → PathConfig
-         │
-3. Check PathConfig.Algorithm == "prequal"
-         │
-4. Get backends from BackendIPStore
-         │
-5. [ASYNC] PrequalLB.TriggerProbes(serviceKey, backends)
-         │         └──▶ Sends probes to random backends
-         │         └──▶ Updates probe pool when responses arrive
-         │
-6. [SYNC] PrequalLB.Select(serviceKey) → backend IP
-         │         └──▶ Applies HCL rule to probe pool
-         │         └──▶ Manages probe lifecycle
-         │
-7. Forward request to selected backend
-         │
-8. Track request completion (for passive latency observation)
-```
-
----
-
-## Key Implementation Decisions to Make
-
-1. **Probe endpoint**: Sidecar agent vs. app-integrated vs. passive observation?
-
-2. **Probe transport**: HTTP GET (simple) or gRPC (lower overhead)?
-
-3. **Pool scope**: Per-service pool (simpler) or per-service-per-path (finer-grained)?
-
-4. **Fallback behavior**: What happens when Prequal fails or pool is empty? (Random selection is typical)
-
-5. **Metrics/Observability**: Expose probe pool stats, selection decisions, latency improvements via your debug server at `:8081`
-
-6. **Global Consistency Strategy**: Backend-side signals vs shared store vs local-only
-
----
-
-## Suggested Implementation Order
-
-1. **Start with passive observation**: Track RIF and latency from the proxy side only. This lets you test the pool and HCL logic without backend changes.
-
-2. **Add the probe pool data structure**: Implement the pool with add/remove/select operations.
-
-3. **Implement HCL selection**: Wire it into `ServeHTTP` for routes with `algo: prequal`.
-
-4. **If running multiple ingress pods**: Add **Shared Stats Store (Option D)** to merge global inflight/latency.
-
-5. **Add async probing** (optional if you keep sidecar plan): Background goroutines that probe backends and feed the pool.
-
-6. **Build the sidecar agent** (optional): For accurate server-side RIF and latency tracking.
-
-7. **Tune parameters**: Test with your workloads to find optimal `Q_RIF`, `r_probe`, etc.
-
----
-
-Would you like me to dive deeper into any specific component, or discuss tradeoffs between the different approaches?
-
-
-Great question! Let me clarify exactly how the probing mechanism works - it's often a point of confusion.
-
-## Probes Are **Separate** From Actual Requests
-
-Probes are **not** sent with every request to the backend application. They are **independent, lightweight status checks** sent to the sidecar on a separate port.
-
-```
-                                    ACTUAL REQUEST PATH
-┌──────────────┐                    ┌─────────────────────────────────────┐
-│ Your Ingress │───────────────────▶│ Backend Pod                         │
-│ Controller   │   HTTP Request     │  ┌─────────────────────────────┐   │
-│              │   to port 8080     │  │ Main App Container          │   │
-│              │                    │  │ (port 8080)                 │   │
-│              │                    │  │ - Processes actual requests │   │
-│              │                    │  └─────────────────────────────┘   │
-│              │                    │                                     │
-│              │   PROBE PATH       │  ┌─────────────────────────────┐   │
-│              │───────────────────▶│  │ Prequal Sidecar             │   │
-│              │   GET /probe       │  │ (port 9999)                 │   │
-│              │   to port 9999     │  │ - Returns {rif, latency}    │   │
-│              │   (async,          │  │ - Never touches app traffic │   │
-│              │    separate)       │  └─────────────────────────────┘   │
-└──────────────┘                    └─────────────────────────────────────┘
-```
-
-## How The Flow Works
-
-### Step 1: Probes Happen Asynchronously (Background)
-
-```
-Time ─────────────────────────────────────────────────────────────▶
-
-Request 1 arrives
-    │
-    ├──▶ [ASYNC] Send ~3 probes to random backends (port 9999)
-    │         These return immediately with {rif: 5, latency: 20ms}
-    │         Results go into the probe pool
-    │
-    └──▶ [SYNC] Select backend from EXISTING pool entries
-               (uses probes from previous requests)
-               Forward request to selected backend (port 8080)
-
-Request 2 arrives
-    │
-    ├──▶ [ASYNC] Send ~3 more probes to different random backends
-    │         Pool gets fresher data
-    │
-    └──▶ [SYNC] Select from pool (now has probes from Request 1)
-               Forward request
-```
-
-**Key insight**: The probes triggered by Request 1 aren't used to route Request 1. They're used for *future* requests. This keeps probing off the critical path.
-
-### Step 2: Probe Frequency
-
-Probes are sent at a rate proportional to your query rate:
-
-| Config | Meaning |
-|--------|---------|
-| `r_probe = 3` | Send 3 probes per incoming request |
-| `r_probe = 1` | Send 1 probe per incoming request |
-| `r_probe = 0.5` | Send 1 probe every 2 requests |
-
-You also have a **minimum probe rate** for idle periods so the pool doesn't go stale.
-
-### Step 3: What The Sidecar Does
-
-The sidecar has two jobs:
-
-**Job 1: Track RIF and Latency**
-
-The sidecar needs to observe traffic to the main app. Options:
-
-```
-Option A: Proxy Mode (sidecar intercepts all traffic)
-┌─────────────────────────────────────────────────────────────┐
-│ Pod                                                         │
-│                                                             │
-│   Ingress ──▶ Sidecar:8080 ──▶ App:8081                    │
-│               (counts RIF,     (actual app)                 │
-│                measures latency)                            │
-└─────────────────────────────────────────────────────────────┘
-
-Option B: Observer Mode (sidecar reads kernel/eBPF stats)
-┌─────────────────────────────────────────────────────────────┐
-│ Pod                                                         │
-│                                                             │
-│   Ingress ──────────────────▶ App:8080                     │
-│                                  ▲                          │
-│   Sidecar:9999 ◀── observes ────┘                          │
-│   (reads connection stats from kernel)                      │
-└─────────────────────────────────────────────────────────────┘
-
-Option C: App Reports to Sidecar (app sends metrics)
-┌─────────────────────────────────────────────────────────────┐
-│ Pod                                                         │
-│                                                             │
-│   Ingress ──▶ App:8080 ──reports──▶ Sidecar:9999           │
-│               (calls sidecar on                             │
-│                request start/end)                           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Job 2: Respond to Probes**
-
-Simple HTTP endpoint:
-
-```
-GET http://backend-ip:9999/probe
-
-Response (JSON, ~100 bytes):
-{
-  "rif": 5,
-  "estimated_latency_ms": 23
+type Selector interface {
+	Select(req *http.Request, endpoints []EndpointView) (EndpointView, error)
 }
 ```
 
-This is **extremely lightweight** - just reading two values and returning JSON. Sub-millisecond response time.
+You may later split this into:
+
+- stateless selectors
+- stateful selectors
+
+### What to learn while doing it
+
+- interface design
+- stateful algorithms in concurrent systems
+- fairness testing
+
+### Exit criteria
+
+- requests distribute across backends under repeated load
+- algorithm behavior is test-covered
+- adding a new algorithm does not require editing proxy core logic
+
+## Milestone 3: Harden controller reconciliation
+
+### Goals
+
+- make sync behavior more reliable and understandable
+- reduce coupling and hidden state behavior
+
+### Tasks
+
+- refactor `syncIngress` into smaller pure-ish helper functions
+- define clearer mapping structures:
+  - ingress -> routes
+  - service -> dependent routes
+  - route -> backend set
+- review delete/update behavior carefully
+- ensure removed or changed routes clean up backend state correctly
+- add controller unit tests with fake informers/listers or extracted pure functions
+
+### What to learn while doing it
+
+- idempotent reconciliation
+- controller cleanup logic
+- testing with Kubernetes fake objects
+
+### Exit criteria
+
+- add/update/delete tests pass
+- route and backend state stay consistent after updates
+- queue reprocessing produces the same final state
+
+## Milestone 4: Add observability before sophistication
+
+### Goals
+
+- make the system understandable while running
+- expose enough signals to debug correctness and performance
+
+### Tasks
+
+- add Prometheus metrics:
+  - request count
+  - request duration
+  - response status counts
+  - backend selection counts
+  - active backends per route
+  - reconciliation count/errors/duration
+- improve logs:
+  - route matched
+  - backend selected
+  - reconciliation result
+  - sync failures
+- add health/readiness endpoints for the controller process
+
+### What to learn while doing it
+
+- metrics design
+- cardinality pitfalls
+- practical debugging of distributed systems
+
+### Exit criteria
+
+- you can explain what the system is doing without reading raw code
+- you can identify broken routes, empty backend sets, and proxy failures quickly
+
+## Milestone 5: Build the test pyramid
+
+### Goals
+
+- make correctness enforceable
+- avoid regressions while you learn
+
+### Test layers
+
+#### Unit tests
+
+- router matching
+- ingress parsing
+- endpoint extraction
+- selector algorithms
+- helper functions
+
+#### Integration tests
+
+- controller reconciliation from fake ingress + endpointslice inputs
+- proxy forwarding to `httptest` backends
+- route updates reflected in live proxy behavior
+
+#### E2E tests
+
+- deploy to `kind`
+- apply ingress + services + deployments
+- send traffic through the controller
+- validate:
+  - route selection
+  - backend distribution
+  - behavior after pod deletion
+
+### What to learn while doing it
+
+- table-driven tests
+- `httptest`
+- `kind`
+- race detector
+- black-box vs white-box testing
+
+### Exit criteria
+
+- CI-quality local test suite exists
+- `go test ./...` is meaningful
+- there is at least one repeatable cluster-level test workflow
+
+## Milestone 6: Add better algorithms
+
+### Goals
+
+- create actual product differentiation
+- build algorithm knowledge safely on top of stable infrastructure
+
+### Implementation order
+
+1. round robin
+2. random
+3. power of two choices
+4. least connections
+5. header/IP hash stickiness
+6. EWMA latency
+
+### Notes
+
+- least-connections needs active request accounting
+- EWMA latency needs careful decay and metric freshness
+- sticky routing needs clear fallback behavior when endpoints disappear
+
+### What to learn while doing it
+
+- algorithmic tradeoffs
+- distributed systems approximation
+- state drift and noisy measurements
+
+### Exit criteria
+
+- each algorithm has unit tests
+- at least round robin, least connections, and hash-based selection have integration validation
+- metrics show per-algorithm behavior
+
+## Milestone 7: Integrate the probe sidecar deliberately
+
+### Goals
+
+- validate whether the sidecar signal adds real value
+- keep the main architecture correct even without it
+
+### Tasks
+
+- define a clear contract for probe data:
+  - schema
+  - freshness window
+  - failure behavior
+- decide how controller or proxy retrieves probe data
+- cache and bound probe reads
+- add algorithm variants that optionally use probe signals
+
+### Critical warning
+
+Do not make request forwarding depend on per-request probe lookups.
+
+If you use probe data, it should be:
+
+- cached
+- optional
+- bounded by timeouts
+- ignored safely when stale
+
+### What to learn while doing it
+
+- signal quality vs complexity
+- polling and cache design
+- failure containment
+
+### Exit criteria
+
+- probe-enhanced selection works as an optional layer
+- stale or missing probe data does not break routing
+
+## Milestone 8: Scale and performance validation
+
+### Goals
+
+- prove the controller and proxy remain usable under realistic load and churn
+
+### Tasks
+
+- create load-test scripts
+- benchmark:
+  - request throughput
+  - p95/p99 latency
+  - controller reconcile latency
+  - backend update propagation latency
+- test at increasing scales:
+  - 10 routes
+  - 100 routes
+  - 1000 routes
+  - increasing endpoint counts per service
+- simulate churn:
+  - pod restarts
+  - scaling deployments up/down
+  - frequent ingress updates
+
+### What to learn while doing it
+
+- benchmarking methodology
+- profiling
+- memory and CPU analysis
+- scale bottleneck identification
+
+### Exit criteria
+
+- you have measured limits, not guesses
+- you know the next bottleneck
+- architecture decisions are supported by data
 
 ---
 
-## Concrete Example Timeline
+## 9. Testing Strategy In Detail
 
-Let's say you have 3 backend pods and `r_probe = 2`:
+Testing should not be a final phase. It should be built alongside each milestone.
 
-```
-Time 0ms:   Request A arrives at ingress
-            - Pool is empty (first request)
-            - Fallback: pick random backend → Pod 1
-            - [ASYNC] Send probes to Pod 2, Pod 3
+## Immediate test files to create
 
-Time 1ms:   Probe responses arrive
-            - Pod 2: {rif: 3, latency: 15ms}
-            - Pod 3: {rif: 1, latency: 12ms}
-            - Pool now has 2 entries
+- `controller/router_test.go`
+- `controller/ingress_parser_test.go`
+- `controller/controller_test.go`
+- `server/server_test.go`
+- `loadbalancer/prequal/selector_test.go`
 
-Time 50ms:  Request B arrives
-            - Pool has 2 entries (from Request A's probes)
-            - HCL selection: Pod 3 is cold (rif=1), lowest latency → Pod 3
-            - [ASYNC] Send probes to Pod 1, Pod 2
+## Initial test cases
 
-Time 51ms:  Probe responses arrive
-            - Pod 1: {rif: 2, latency: 18ms}
-            - Pod 2: {rif: 4, latency: 20ms}
-            - Pool now has 4 entries
+### Router tests
 
-Time 100ms: Request C arrives
-            - Pool has 4 entries
-            - HCL selection: Pod 3 has lowest latency among cold → Pod 3
-            - Pod 3's probe entry: rif incremented to 2 (we added load)
-            - [ASYNC] Send probes to Pod 1, Pod 3
-            
-... and so on
-```
+- exact `/health` beats prefix `/`
+- `/api/v2` beats `/api`
+- unknown host falls back to default host only when appropriate
+- exact path does not match longer paths
+- route removal on ingress update/delete works correctly
 
----
+### Controller tests
 
-## Sidecar Design: What It Needs To Track
+- ingress add populates route and backend store
+- endpointslice update refreshes backend store
+- ingress delete removes route mappings
+- endpoint readiness filtering works
+- named port and numeric port cases both work
 
-### Data Structures in the Sidecar
+### Proxy tests
 
-```
-Sidecar State:
-  - currentRIF: atomic int64          // Increment on request start, decrement on end
-  - latencyBuckets: map[int]RingBuffer // RIF bucket → recent latencies
-```
+- request is forwarded to matched backend
+- no route returns `404`
+- no backends returns `503`
+- backend error returns `502`
+- round robin distributes requests across backends
 
-### Tracking RIF
+### Concurrency and safety
 
-If using **Proxy Mode** (sidecar intercepts traffic):
+- `go test -race ./...`
+- repeated route updates while serving requests
+- repeated endpoint churn while selecting backends
 
-```
-On request received at sidecar:
-    atomic.AddInt64(&currentRIF, 1)
-    startTime = now()
-    arrivalRIF = currentRIF
-    
-    forward request to app
-    wait for response
-    
-    latency = now() - startTime
-    atomic.AddInt64(&currentRIF, -1)
-    
-    // Store for latency estimation
-    latencyBuckets[arrivalRIF].Add(latency)
-```
+## E2E environment
 
-### Estimating Latency
+Use `kind` and automate:
 
-When a probe arrives:
-
-```
-GET /probe handler:
-    rif = atomic.LoadInt64(&currentRIF)
-    
-    // Get recent latencies at similar RIF levels
-    bucket = latencyBuckets[rif]
-    if bucket.Empty():
-        // Try nearby buckets
-        bucket = findNearestBucket(rif)
-    
-    estimatedLatency = bucket.Median()
-    
-    return JSON{rif, estimatedLatency}
-```
-
-The latency is bucketed by RIF because **latency depends on how loaded the server was**. A server with 10 requests in flight will have higher latency than one with 1 request.
+- cluster creation
+- image build/load
+- controller deploy
+- test workload deploy
+- ingress apply
+- request validation
+- teardown
 
 ---
 
-## Why Probes Are Cheap
+## 10. Suggested Refactor Sequence
 
-| Aspect | Why It's Cheap |
-|--------|----------------|
-| **Frequency** | Only ~1-5 probes per actual request, not per-request overhead |
-| **Size** | ~100 bytes request, ~100 bytes response |
-| **Latency** | Sub-millisecond (just reading memory, no I/O) |
-| **CPU** | Negligible - one atomic read + JSON marshal |
-| **Connection** | Can use HTTP/1.1 keep-alive or HTTP/2 |
+Refactor in this order to avoid chaos.
 
-The paper measured probe overhead in production YouTube and found it was in the noise compared to the actual request processing.
+1. Add tests around current router behavior before changing it.
+2. Introduce ingress parsing helpers.
+3. Introduce internal route model.
+4. Introduce selector interface with round robin.
+5. Move proxy selection logic behind the selector.
+6. Add metrics and health endpoints.
+7. Refactor reconciliation internals for clarity.
+8. Add more algorithms.
+9. Add probe integration.
 
----
-
-## Sidecar Deployment Pattern
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-backend
-spec:
-  template:
-    spec:
-      containers:
-      # Your actual application
-      - name: app
-        image: my-app:latest
-        ports:
-        - containerPort: 8080
-        
-      # Prequal sidecar
-      - name: prequal-sidecar
-        image: prequal-sidecar:latest
-        ports:
-        - containerPort: 9999   # Probe endpoint
-        - containerPort: 8081   # Proxy port (if using proxy mode)
-        env:
-        - name: UPSTREAM_PORT
-          value: "8080"         # Forward to app
-        - name: PROXY_PORT
-          value: "8081"         # Listen for traffic
-        - name: PROBE_PORT
-          value: "9999"         # Listen for probes
-```
-
-If using **Proxy Mode**, the Service would point to the sidecar's proxy port (8081), which forwards to the app (8080):
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: my-backend-svc
-spec:
-  ports:
-  - name: http
-    port: 80
-    targetPort: 8081   # Sidecar proxy port, NOT app directly
-  - name: probe
-    port: 9999
-    targetPort: 9999   # Probe endpoint
-```
-
-Your ingress controller would:
-- Send actual requests to `backend-ip:80` (which hits sidecar:8081 → app:8080)
-- Send probes to `backend-ip:9999`
+This order matters because it keeps the system working while you increase sophistication.
 
 ---
 
-## Summary
+## 11. What You Need To Learn Exactly, In Order
 
-| Question | Answer |
-|----------|--------|
-| Does every request trigger a probe? | No - probes are decoupled from requests |
-| How often are probes sent? | `r_probe` probes per incoming request (configurable, typically 1-5) |
-| Do probes block requests? | No - probes are async, requests use existing pool |
-| What port do probes go to? | Separate port (e.g., 9999), not the app port |
-| What does the sidecar do? | 1) Track RIF/latency, 2) Respond to `/probe` |
-| Is this expensive? | No - probes are ~100 bytes, sub-millisecond |
+If you want the learning path to track implementation, use this sequence.
 
-Would you like me to go deeper into the sidecar implementation details, or discuss how the sidecar would track RIF/latency in different modes?
+## Week/Block 1: Controller fundamentals
 
----
+- informers
+- listers
+- workqueues
+- idempotent reconciliation
+- Kubernetes ingress resource structure
 
-# IMPLEMENTATION PROGRESS
+Build:
 
-## Phase 2: Prequal Sidecar (Observer Mode) ✅ COMPLETE
+- ingress-class fix
+- route parsing helpers
+- controller tests for add/update/delete
 
-### What Was Built
+## Week/Block 2: Routing and proxying
 
-A lightweight sidecar container that observes TCP connections via `/proc/net/tcp` and exposes RIF data through a probe endpoint.
+- radix/prefix matching
+- `httputil.ReverseProxy`
+- transport tuning
+- timeout behavior
 
-### Files Created
+Build:
 
-```
-probe/
-├── probe.go       # Main sidecar implementation
-└── Dockerfile     # Container build file
-```
+- router correctness improvements
+- proxy tests
+- health/debug endpoint cleanup
 
-### Implementation Details
+## Week/Block 3: Load balancing basics
 
-**probe/probe.go** - Core sidecar logic:
-```go
-// Key structures
-type ProbeResponse struct {
-    RIF       int    `json:"rif"`
-    BackendIP string `json:"backend_ip"`
-    Timestamp int64  `json:"timestamp_ms"`
-}
+- round robin
+- random
+- least connections
+- state management for selectors
 
-type Observer struct {
-    targetPort uint64
-    procFS     procfs.FS
-    mu         sync.RWMutex
-    currentRIF int
-    localIP    string
-}
-```
+Build:
 
-**Features implemented:**
-1. **RIF Tracking via /proc/net/tcp**
-   - Reads `/proc/net/tcp` and `/proc/net/tcp6` every 100ms
-   - Counts ESTABLISHED connections on target port
-   - Uses `github.com/prometheus/procfs` for parsing
+- selector interface
+- round robin implementation
+- algorithm-based route config
 
-2. **HTTP Probe Endpoint**
-   - `GET /probe` → Returns `{rif, backend_ip, timestamp_ms}`
-   - `GET /health` → Health check endpoint
+## Week/Block 4: Observability and reliability
 
-3. **Configuration via Environment Variables**
-   - `TARGET_PORT`: Port to observe (default: 80)
-   - `PROBE_PORT`: Port to serve probe endpoint (default: 9999)
+- Prometheus metrics
+- structured logging
+- race detection
+- failure-mode testing
 
-### Deployment Configuration
+Build:
 
-**test.yaml** - Added sidecar to api-deployment:
-```yaml
-containers:
-- name: echo                    # Main app
-  image: ealen/echo-server:latest
-  ports:
-  - containerPort: 80
+- metrics endpoint
+- request/reconcile metrics
+- better logs
+- race-safe validation
 
-- name: prequal-sidecar         # Sidecar
-  image: prequal-sidecar:latest
-  ports:
-  - containerPort: 9999
-  env:
-  - name: TARGET_PORT
-    value: "80"
-  - name: PROBE_PORT
-    value: "9999"
-  resources:
-    requests:
-      cpu: 10m
-      memory: 16Mi
-    limits:
-      cpu: 50m
-      memory: 32Mi
-```
+## Week/Block 5: Cluster-level validation
 
-**Service updated** to expose both ports:
-```yaml
-ports:
-- name: http
-  port: 80
-  targetPort: 80
-- name: probe
-  port: 9999
-  targetPort: 9999
-```
+- `kind`
+- realistic test deployments
+- endpoint churn
+- benchmark tooling
 
-### Makefile Targets Added
+Build:
 
-```makefile
-build-sidecar          # Build sidecar binary locally
-docker-build-sidecar   # Build sidecar Docker image
-kind-load-sidecar      # Load sidecar into kind cluster
-kind-load-all          # Build and load all images
-test-probe             # Test probe endpoint on pods
-port-forward-probe     # Port forward to probe endpoint
-```
+- repeatable e2e workflow
+- scale scripts
+- churn and failover tests
 
-### Testing Results
+## Week/Block 6+: Advanced algorithms and probe integration
 
-**Verified working:**
-- Sidecar starts and reads /proc/net/tcp correctly
-- RIF reflects active connections under load
-- Tested with `hey` load generator:
-  - `hey -n 10000 -c 50 http://localhost:8080/` → RIF shows ~50
-  - Variable concurrency (`-c 10`, `-c 100`) → RIF changes accordingly
+- consistent hashing
+- EWMA latency
+- queueing/load heuristics
+- signal freshness and staleness handling
 
-**Test commands:**
-```bash
-# Port forward both app and probe
-kubectl port-forward svc/api-service 8080:80 9999:9999
+Build:
 
-# Watch RIF in real-time
-watch -n 0.2 'curl -s http://localhost:9999/probe'
-
-# Generate variable load
-for c in 10 30 70 20 90 15 50; do
-  hey -c $c -z 3s http://localhost:8080/ > /dev/null 2>&1
-done
-```
+- advanced selectors
+- optional probe-assisted routing
+- measured comparison of algorithms
 
 ---
 
-# FUTURE WORK
+## 12. Practical Next Sprint Plan
 
-## Phase 3: Add Latency Tracking to Sidecar
+If you only do one focused sprint next, do this exact sequence.
 
-### Option A: TCP RTT (Simple)
+## Sprint goal
 
-Add TCP RTT measurement using `ss -ti` or netlink sockets:
+Turn the project from "interesting prototype" into "correct, testable ingress controller core".
 
-```go
-type ProbeResponse struct {
-    RIF             int     `json:"rif"`
-    BackendIP       string  `json:"backend_ip"`
-    EstimatedLatency float64 `json:"estimated_latency_ms"`  // NEW
-    LatencySource   string  `json:"latency_source"`         // "tcp_rtt" | "app_metrics"
-    Timestamp       int64   `json:"timestamp_ms"`
-}
-```
+## Sprint tasks
 
-**Implementation approach:**
-1. Run `ss -ti 'sport = :80'` to get TCP_INFO
-2. Parse RTT from output: `rtt:0.045/0.022`
-3. Average across active connections
+1. Fix ingress-class handling.
+2. Add table-driven router tests.
+3. Add controller tests for ingress + endpointslice reconciliation.
+4. Introduce a selector interface.
+5. Implement round robin.
+6. Update proxy to use the selector.
+7. Add basic Prometheus metrics and health endpoints.
+8. Add `go test -race ./...` to your local validation workflow.
 
-### Option B: eBPF (Advanced, More Accurate)
+## Sprint deliverables
 
-Replace /proc/net polling with eBPF for event-driven tracking:
+- correct ingress parsing
+- real load balancing
+- meaningful automated tests
+- basic observability
 
-**Benefits:**
-- Zero polling overhead
-- Precise connection duration (actual request latency)
-- Captures every connection (no sampling gaps)
+## Sprint learning outcomes
 
-**Architecture:**
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     LINUX KERNEL                                │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ eBPF Programs                                              │ │
-│  │  - tracepoint/sock/inet_sock_set_state                    │ │
-│  │  - Tracks ESTABLISHED → increment RIF                      │ │
-│  │  - Tracks CLOSE → decrement RIF, compute latency          │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│                          │                                      │
-│                    eBPF Maps                                    │
-│           ┌──────────────┼──────────────┐                      │
-│           ▼              ▼              ▼                      │
-│    [rif_counter]  [conn_start_times]  [latency_ringbuf]       │
-└───────────────────────────────────────────────────────────────┘
-                           ▲
-                           │ bpf() syscall
-                           │
-┌──────────────────────────┴────────────────────────────────────┐
-│                  USERSPACE (Go + cilium/ebpf)                 │
-│  - Loads eBPF programs                                        │
-│  - Reads maps for /probe endpoint                             │
-│  - Computes latency histogram bucketed by RIF                 │
-└───────────────────────────────────────────────────────────────┘
-```
+By the end of that sprint you should understand:
 
-**Required changes:**
-1. Add `bpf/` directory with eBPF C code
-2. Use `cilium/ebpf` library with `bpf2go`
-3. Update Dockerfile for privileged container
-4. Add security context to deployment
+- how a controller actually reconciles cluster state
+- how route matching correctness is validated
+- how a reverse proxy and balancer interact
+- how to add features without destroying architecture
 
 ---
 
-## Phase 4: Implement Probe Pool in Ingress Controller
+## 13. Definition Of "Moving In The Right Direction"
 
-### New Package: `loadbalancer/prequal/`
+You are moving in the right direction if, after the next 2 to 3 milestones, the project can do all of this reliably:
 
-```
-loadbalancer/prequal/
-├── pool.go        # ProbePool - stores probe responses
-├── selector.go    # HCL selection algorithm
-├── prober.go      # Async background probing
-├── config.go      # Configuration struct
-└── prequal.go     # Main PrequalLB type
-```
+- watch ingress and endpointslice changes
+- build correct route state
+- distribute requests across live backends
+- survive backend churn
+- expose enough metrics/logs to debug behavior
+- pass unit and integration tests consistently
+- run repeatable e2e validation in `kind`
 
-### Data Structures
-
-```go
-// ProbeEntry represents a single probe response in the pool
-type ProbeEntry struct {
-    BackendIP   string
-    RIF         int
-    Latency     time.Duration
-    ReceivedAt  time.Time
-    UseCount    int
-}
-
-// ProbePool maintains probe responses for a service
-type ProbePool struct {
-    mu          sync.RWMutex
-    entries     []*ProbeEntry
-    maxSize     int           // Default: 16
-    timeout     time.Duration // Default: 1s
-    rifQuantile *RollingQuantile
-}
-
-// PrequalLB is the main load balancer
-type PrequalLB struct {
-    pools       map[string]*ProbePool  // serviceKey -> pool
-    config      Config
-    httpClient  *http.Client
-    probeWG     sync.WaitGroup
-}
-
-// Config holds Prequal configuration
-type Config struct {
-    ProbesPerQuery float64       // r_probe, default: 2
-    PoolSize       int           // default: 16
-    ProbeTimeout   time.Duration // default: 1s
-    QRif           float64       // hot/cold threshold, default: 0.84
-    RemoveRate     float64       // r_remove, default: 0.5
-    ReuseLimit     int           // b_reuse, computed from formula
-    ProbePort      int           // default: 9999
-}
-```
-
-### HCL Selection Algorithm
-
-```go
-func (p *ProbePool) Select() *ProbeEntry {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    // 1. Filter expired probes
-    p.evictExpired()
-    
-    // 2. Fallback if pool is too small
-    if len(p.entries) < 2 {
-        return nil  // Caller should use random selection
-    }
-    
-    // 3. Compute hot/cold threshold
-    threshold := p.rifQuantile.Quantile(p.config.QRif)
-    
-    // 4. Classify probes
-    var hot, cold []*ProbeEntry
-    for _, e := range p.entries {
-        if e.RIF > threshold {
-            hot = append(hot, e)
-        } else {
-            cold = append(cold, e)
-        }
-    }
-    
-    // 5. HCL selection
-    var selected *ProbeEntry
-    if len(cold) == 0 {
-        // All hot: pick lowest RIF
-        selected = minByRIF(hot)
-    } else {
-        // Has cold: pick lowest latency among cold
-        selected = minByLatency(cold)
-    }
-    
-    // 6. Update selected probe
-    selected.UseCount++
-    selected.RIF++  // We're adding load
-    
-    // 7. Check reuse limit
-    if selected.UseCount >= p.config.ReuseLimit {
-        p.remove(selected)
-    }
-    
-    return selected
-}
-```
-
-### Integration with ProxyServer
-
-**server/server.go** changes:
-
-```go
-type ProxyServer struct {
-    router    *controller.Router
-    ips       *controller.BackendIPStore
-    Transport *http.Transport
-    prequal   *prequal.PrequalLB  // NEW
-}
-
-func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    // ... existing route matching ...
-    
-    backends := p.ips.Get(pathConfig.Key)
-    
-    // Select backend based on algorithm
-    var backend string
-    switch pathConfig.Algorithm {
-    case "prequal":
-        backend = p.prequal.Select(pathConfig.Key, backends)
-        // Trigger async probes
-        go p.prequal.TriggerProbes(pathConfig.Key, backends)
-    case "round-robin":
-        backend = p.roundRobin(pathConfig.Key, backends)
-    default:
-        backend = backends[rand.Intn(len(backends))]
-    }
-    
-    // ... forward request ...
-}
-```
+If you cannot do those things yet, do not jump to advanced "prequal" intelligence. Finish the platform core first.
 
 ---
 
-## Phase 5: Async Probing System
+## 14. Final Recommendation
 
-### Prober Implementation
+The best next direction is:
 
-```go
-// Prober handles async probing of backends
-type Prober struct {
-    pool       *ProbePool
-    backends   []string
-    probePort  int
-    httpClient *http.Client
-    rate       float64  // probes per request
-    
-    probeChan  chan string  // backends to probe
-    stopChan   chan struct{}
-}
+- keep the architecture
+- harden the controller/proxy core
+- add tests before complexity
+- add round robin before advanced algorithms
+- treat the sidecar probe as a later optimization and research track
 
-func (p *Prober) Start() {
-    go p.probeLoop()
-}
+In practical terms:
 
-func (p *Prober) probeLoop() {
-    for {
-        select {
-        case backend := <-p.probeChan:
-            p.probeBackend(backend)
-        case <-p.stopChan:
-            return
-        }
-    }
-}
-
-func (p *Prober) probeBackend(backend string) {
-    url := fmt.Sprintf("http://%s:%d/probe", backend, p.probePort)
-    
-    resp, err := p.httpClient.Get(url)
-    if err != nil {
-        return  // Probe failed, skip
-    }
-    defer resp.Body.Close()
-    
-    var probeResp ProbeResponse
-    json.NewDecoder(resp.Body).Decode(&probeResp)
-    
-    entry := &ProbeEntry{
-        BackendIP:  backend,
-        RIF:        probeResp.RIF,
-        Latency:    time.Duration(probeResp.EstimatedLatency) * time.Millisecond,
-        ReceivedAt: time.Now(),
-        UseCount:   0,
-    }
-    
-    p.pool.Add(entry)
-}
-
-func (p *Prober) TriggerProbes(backends []string) {
-    // Select random backends to probe
-    n := int(p.rate)
-    if rand.Float64() < (p.rate - float64(n)) {
-        n++  // Probabilistic rounding
-    }
-    
-    // Shuffle and pick n backends
-    perm := rand.Perm(len(backends))
-    for i := 0; i < n && i < len(backends); i++ {
-        select {
-        case p.probeChan <- backends[perm[i]]:
-        default:
-            // Channel full, skip
-        }
-    }
-}
-```
+build a clean, correct, test-covered ingress controller core first; then layer in smarter balancing.
 
 ---
 
-## Phase 6: Configuration via Ingress Annotations
+## 15. RIF And Estimated Latency: eBPF Strategy
 
-### Annotation Parsing
+This section updates the earlier recommendation with a more precise direction for collecting:
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app
-  labels:
-    ingress.class: prequal
-  annotations:
-    lb/algo: "prequal"
-    prequal/probes-per-query: "3"
-    prequal/pool-size: "16"
-    prequal/q-rif: "0.84"
-    prequal/probe-timeout: "1s"
-    prequal/probe-port: "9999"
-```
+- RIF: requests or connections in flight
+- estimated latency: backend response latency or connection-level latency
 
-### Controller Changes
+## Short answer
 
-```go
-func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
-    // ... existing logic ...
-    
-    // Parse Prequal config from annotations
-    if algo == "prequal" {
-        config := prequal.ParseConfig(ingress.Annotations)
-        c.prequal.UpdateConfig(serviceKey, config)
-    }
-}
-```
+Yes, learning eBPF here is a strong idea, but it should be used carefully.
 
----
+The right architecture is not:
 
-## Phase 7: Observability & Metrics
+- "replace core balancing with eBPF immediately"
 
-### Debug Endpoint Enhancements
+The right architecture is:
 
-Extend `/routes` endpoint to include Prequal stats:
+- keep proxy-level instrumentation as the source of truth for request lifecycle inside the ingress
+- use eBPF as an optional signal pipeline for deeper socket/network visibility
+- aggregate those signals safely across multiple ingress pods
 
-```json
-{
-  "host": "test.example.com",
-  "paths": [{
-    "path": "/api",
-    "algorithm": "prequal",
-    "prequal_stats": {
-      "pool_size": 12,
-      "hot_count": 3,
-      "cold_count": 9,
-      "avg_rif": 15.2,
-      "avg_latency_ms": 23.5,
-      "probes_sent": 1523,
-      "probes_failed": 12
-    }
-  }]
-}
-```
+## What RIF should mean in this project
 
-### Prometheus Metrics
+You need to define this clearly before implementing anything.
 
-```go
-var (
-    probePoolSize = prometheus.NewGaugeVec(
-        prometheus.GaugeOpts{
-            Name: "prequal_probe_pool_size",
-            Help: "Current size of probe pool",
-        },
-        []string{"service"},
-    )
-    
-    probeLatency = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "prequal_probe_latency_seconds",
-            Help:    "Probe response latency",
-            Buckets: []float64{.001, .005, .01, .025, .05, .1},
-        },
-        []string{"service", "backend"},
-    )
-    
-    selectionDecisions = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "prequal_selection_total",
-            Help: "Number of backend selection decisions",
-        },
-        []string{"service", "result"},  // result: "hot", "cold", "fallback"
-    )
-)
-```
+There are two different meanings:
 
----
+### Option A: Request inflight count
 
-## Phase 8: Production Hardening
+This means:
 
-### Error Handling & Fallbacks
+- how many HTTP requests are currently being served for a backend
 
-1. **Probe failures**: Skip failed probes, don't add to pool
-2. **Empty pool**: Fall back to random selection
-3. **All backends unhealthy**: Circuit breaker pattern
-4. **Sidecar not deployed**: Detect missing probe port, fall back
+This is the best signal for:
 
-### Performance Optimizations
+- HTTP-aware least-connections
+- request scheduling inside your ingress proxy
 
-1. **Connection pooling**: Reuse HTTP connections for probes
-2. **Probe batching**: Send multiple probes in parallel
-3. **Pool sharding**: Reduce lock contention for high-traffic services
+Best place to measure it:
 
-### Testing
+- inside your Go proxy process
 
-1. **Unit tests**: Pool operations, HCL selection
-2. **Integration tests**: End-to-end with sidecar
-3. **Load tests**: Compare Prequal vs round-robin under load
-4. **Chaos tests**: Sidecar failures, network partitions
+Why:
 
----
+- exact
+- cheap
+- request-aware
+- works correctly even when HTTP keepalive reuses one TCP connection for many requests
 
-# IMPLEMENTATION TIMELINE
+### Option B: Connection inflight count
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Control Plane (K8s Watcher) | ✅ Complete |
-| 2 | Sidecar (Observer Mode, RIF only) | ✅ Complete |
-| 3 | Add Latency Tracking | 🔲 Pending |
-| 4 | Probe Pool in Controller | 🔲 Pending |
-| 4b | Shared Stats Store (Option D) | 🔲 Pending |
-| 5 | Async Probing System | 🔲 Pending |
-| 6 | Ingress Annotation Config | 🔲 Pending |
-| 7 | Observability & Metrics | 🔲 Pending |
-| 8 | Production Hardening | 🔲 Pending |
+This means:
+
+- how many active TCP connections currently exist for a backend or pod
+
+This is the signal your current probe sidecar is closest to.
+
+Best place to measure it:
+
+- eBPF or kernel/proc observation
+
+Why:
+
+- visible without application instrumentation
+- useful for TCP-oriented traffic
+- useful as a rough load heuristic
+
+But it is weaker than request inflight for HTTP load balancing because:
+
+- one connection may carry many requests
+- idle keepalive connections can distort the signal
+- HTTP/2 multiplexing breaks "one connection ~= one active request"
+
+## Recommendation
+
+Use this definition split:
+
+- primary RIF for balancing: request inflight in the ingress proxy
+- secondary RIF for experiments: connection inflight from eBPF
+
+That gives you a correct baseline and still lets you learn eBPF meaningfully.
+
+## What estimated latency should mean
+
+You should also separate two kinds of latency:
+
+### Proxy-observed request latency
+
+This is:
+
+- time from forwarding request upstream to receiving response headers/body completion
+
+Measure this in the ingress process first.
+
+This is the best signal for:
+
+- EWMA latency balancing
+- request-level routing decisions
+
+### Network/socket latency
+
+This is:
+
+- connect latency
+- retransmission behavior
+- RTT-like transport signals
+- socket queuing / kernel timing hints
+
+This is where eBPF can help, but it is not a drop-in replacement for request latency.
+
+## eBPF is a good fit for these cases
+
+- observing TCP connect/close lifecycle per backend pod
+- measuring connection establishment latency
+- counting active sockets per pod/backend
+- capturing kernel-level network health signals
+- building pod-local load hints without modifying the app container
+
+## eBPF is a poor first fit for these cases
+
+- exact HTTP inflight requests
+- exact per-request end-to-end latency in a keepalive-heavy proxy
+- making every routing decision depend on synchronous kernel probing
 
 ---
 
-# REFERENCES
+## 16. Multi-Ingress-Pod eBPF Architecture
 
-- **Paper**: "Load is not what you should balance: Introducing Prequal" (NSDI'24)
-  - https://www.usenix.org/conference/nsdi24/presentation/wydrowski
-- **procfs library**: github.com/prometheus/procfs
-- **eBPF library**: github.com/cilium/ebpf
-- **Load testing**: github.com/rakyll/hey
+If you run multiple ingress pods, you must decide whether balancing signals are:
+
+- local to each ingress pod
+- or globally shared across all ingress pods
+
+## Recommended model
+
+Start with local decision-making and optional global approximation.
+
+### Local signals per ingress pod
+
+Each ingress pod keeps:
+
+- local request inflight counters
+- local EWMA latency per backend
+- local backend selection state
+
+This is fast and simple.
+
+It works well because each pod only needs to choose well for the requests it receives.
+
+### Optional cluster-wide signal sharing
+
+Add this only later if you need cluster-wide least-connections behavior.
+
+You can aggregate:
+
+- eBPF-derived connection counts
+- proxy-derived request inflight counts
+- proxy-derived latency EWMAs
+
+But the sharing should be:
+
+- asynchronous
+- approximate
+- bounded by freshness windows
+
+Do not try to build a strongly consistent global load-balancing state first.
+
+That complexity is not worth it at this stage.
+
+## Best deployment shape for eBPF
+
+For eBPF, the cleanest model is:
+
+- a node-level eBPF agent as a DaemonSet
+- each agent observes socket/network events on its node
+- it exports summarized metrics keyed by:
+  - pod IP
+  - namespace
+  - service/backend identity
+  - timestamp/freshness
+
+Then your ingress pods or controller can consume summarized state, not raw kernel events.
+
+Why this is better than one sidecar per app pod:
+
+- eBPF usually needs elevated privileges and kernel access
+- node-level deployment is operationally more realistic
+- one agent can observe many pods on the node
+- you avoid putting privileged logic in every workload pod
+
+## Data flow for the recommended architecture
+
+1. Ingress proxy records request inflight and request latency locally.
+2. Node eBPF agent observes socket-level activity and exports connection metrics.
+3. A lightweight collector or shared cache aggregates metrics by backend pod.
+4. Each ingress pod periodically refreshes backend metrics into an in-memory cache.
+5. Selector algorithms use:
+   - proxy-local request inflight as the primary signal
+   - optional eBPF connection/load hints as secondary signals
+
+## Important rule
+
+Never make the request path depend on querying eBPF data synchronously.
+
+Always use cached snapshots with:
+
+- timeout bounds
+- freshness TTLs
+- safe fallback to simpler algorithms
+
+---
+
+## 17. What To Learn For The eBPF Path
+
+If you want this to be a learning track, do it in this order.
+
+## Stage 1: Networking and Linux basics
+
+Learn:
+
+- TCP lifecycle
+- listen, accept, connect, close
+- keepalive
+- HTTP/1.1 vs HTTP/2 multiplexing
+- socket states and why connection count is only an approximation
+
+Implement:
+
+- document exactly what signal you want to collect
+- define metric schemas for:
+  - inflight requests
+  - active TCP connections
+  - connect latency
+  - EWMA request latency
+
+## Stage 2: Proxy-native instrumentation first
+
+Learn:
+
+- middleware timing
+- atomic counters
+- histogram and EWMA calculation
+
+Implement:
+
+- per-backend inflight request counters in the ingress proxy
+- per-backend request latency measurement
+- EWMA latency update logic
+- tests proving counters increment/decrement correctly on success and failure
+
+Why this comes first:
+
+- this gives you a correct baseline before eBPF
+
+## Stage 3: eBPF fundamentals
+
+Learn:
+
+- BPF maps
+- kprobes
+- tracepoints
+- perf/ring buffers
+- verifier constraints
+- CO-RE
+- user space loader pattern
+
+Implement:
+
+- a minimal eBPF program that tracks TCP connect/close events
+- user space code that reads events and maintains:
+  - active connections per pod/backend IP
+  - connect latency samples if available from chosen hooks
+
+## Stage 4: Kubernetes identity mapping
+
+Learn:
+
+- mapping IPs to pods
+- CNI/network namespace implications
+- node-local visibility
+
+Implement:
+
+- a node agent that enriches socket events with pod metadata
+- stable keys such as:
+  - namespace/pod
+  - service key
+  - endpoint key
+
+## Stage 5: Aggregate and consume metrics safely
+
+Learn:
+
+- pull vs push metrics
+- staleness handling
+- cache invalidation
+
+Implement:
+
+- a small in-memory metrics cache in the ingress
+- freshness TTL
+- fallback behavior when metrics are missing
+- metrics snapshot format for debugging
+
+## Stage 6: Algorithm experiments
+
+Learn:
+
+- combining strong and weak signals
+- noisy metric smoothing
+- bias and oscillation in adaptive balancing
+
+Implement:
+
+- least-connections using proxy inflight counts
+- latency-aware selection using proxy EWMA
+- hybrid selector that uses eBPF connection counts only as a tie-breaker or penalty term
+
+---
+
+## 18. Concrete Implementation Plan For eBPF Integration
+
+Follow this exact order.
+
+## Step 1: Add correct request-level metrics in the ingress
+
+Implement:
+
+- `inflight_requests{backend}`
+- `request_duration_seconds{backend}`
+- backend-local EWMA latency state
+
+Do not start with eBPF before this exists.
+
+## Step 2: Build least-connections and EWMA selectors without eBPF
+
+Implement:
+
+- least-connections from proxy inflight counters
+- EWMA latency selector from proxy-observed durations
+
+This proves your balancing framework.
+
+## Step 3: Prototype eBPF as a separate node agent
+
+Implement:
+
+- node DaemonSet
+- eBPF program for socket lifecycle events
+- user space exporter
+- debug output only at first
+
+Success criteria:
+
+- you can print active connection counts per backend pod reliably
+
+## Step 4: Add a metrics API between eBPF agent and ingress
+
+Implement one of:
+
+- Prometheus scrape path
+- node-local HTTP endpoint
+- gRPC stream if you need lower latency later
+
+Recommended first choice:
+
+- Prometheus-style or simple HTTP JSON endpoint
+
+Keep it simple.
+
+## Step 5: Ingest eBPF metrics into the ingress as optional hints
+
+Implement:
+
+- periodic background refresh
+- cache by backend endpoint key
+- freshness TTL
+- selector fallback when metrics are stale
+
+## Step 6: Compare algorithm quality
+
+Test:
+
+- round robin
+- least-connections using proxy inflight
+- EWMA using proxy latency
+- hybrid EWMA + eBPF connection penalty
+
+Measure:
+
+- throughput
+- p95/p99 latency
+- fairness across backends
+- recovery under pod churn
+
+## Step 7: Decide if eBPF adds enough value
+
+Possible outcomes:
+
+- eBPF materially improves decisions under some workloads
+- eBPF is useful only for observability, not balancing
+- eBPF is not worth the operational complexity yet
+
+All three are valid outcomes.
+
+The learning still pays off.
+
+That path will maximize both learning value and engineering quality.
