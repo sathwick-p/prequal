@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"log"
-	"prequal/controller"
 	"net/http"
+	"prequal/controller"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func StartDebugServer(c *controller.Controller) {
@@ -12,6 +14,15 @@ func StartDebugServer(c *controller.Controller) {
 		routes := c.GetRouterSnapshot()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(routes)
+	})
+	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/routes", http.StatusFound)

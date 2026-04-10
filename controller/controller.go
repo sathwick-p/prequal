@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"log"
+	"prequal/observability"
 	"sync"
 	"time"
 
@@ -178,6 +179,7 @@ func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
 
 }
 func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
+	reconcileStart := time.Now()
 
 	algo := ingress.Annotations["lb/algo"]
 	if c.isIngressPrequal(ingress) == false {
@@ -243,6 +245,7 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 			}
 		}
 	}
+	observability.RecordReconciliation("success", time.Since(reconcileStart))
 }
 
 func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey string, portNumber int32, portName string) {
@@ -298,6 +301,7 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey strin
 		c.store.Set(storeKey, allEndpoints)
 		log.Printf("[SYNC] %s: %+v\n", storeKey, allEndpoints)
 	}
+	observability.SetActiveBackends(storeKey, float64(len(allEndpoints)))
 }
 
 func (c *BackendIPStore) Set(key string, endpoints []*Endpoint) {
