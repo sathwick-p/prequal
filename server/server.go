@@ -3,11 +3,12 @@ package server
 import (
 	"fmt"
 	"log"
-	"main/controller"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"prequal/controller"
+	"prequal/loadbalancer"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +18,10 @@ type ProxyServer struct {
 	router    *controller.Router
 	ips       *controller.BackendIPStore
 	Transport *http.Transport
+	selector  loadbalancer.Selector
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -28,6 +30,7 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore) *
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 		},
+		selector: selector,
 	}
 }
 
@@ -52,12 +55,17 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	backends := p.ips.Get(pathConfig.Key)
 	if len(backends) == 0 {
 		log.Printf("[PROXY] No backends for %s", pathConfig.Key)
-		http.Error(w, "no backends available", http.StatusServiceUnavailable)
+		http.Error(w, "0 backends available", http.StatusServiceUnavailable)
 		return
 	}
 
 	// 4. Select backend (simple: first one for now)
-	backend := backends[0]
+	backend, err := p.selector.Select(backends)
+	if err != nil {
+		http.Error(w, "0 backends available", http.StatusServiceUnavailable)
+		return
+	}
+
 	target := fmt.Sprintf(
 		"http://%s",
 		net.JoinHostPort(backend.Addr(), strconv.Itoa(int(backend.Port()))),

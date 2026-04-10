@@ -147,11 +147,9 @@ func (c *Controller) onIngressUpdate(oldObj, newObj interface{}) {
 	if !ok {
 		return
 	}
-
-	if newIngress.Labels["ingress.class"] != "prequal" {
+	if c.isIngressPrequal(newIngress) == false {
 		return
 	}
-
 	key, err := cache.MetaNamespaceKeyFunc(newIngress)
 	if err != nil {
 		return
@@ -159,12 +157,20 @@ func (c *Controller) onIngressUpdate(oldObj, newObj interface{}) {
 	c.queue.Add(key)
 	log.Printf("[DEBUG] Added to queue: %s", key)
 }
-
+func (c *Controller) isIngressPrequal(ingress *networkingv1.Ingress) bool {
+	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName == "prequal" {
+		return true
+	} else {
+		if ingress.Labels["ingress.class"] != "" && ingress.Labels["ingress.class"] == "prequal" {
+			return true
+		}
+	}
+	return false
+}
 func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
-	if ingress.Labels["ingress.class"] != "prequal" {
+	if c.isIngressPrequal(ingress) == false {
 		return
 	}
-
 	ingressKey := fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name)
 	log.Printf("[DELETE] Ingress %s deleted, cleaning up\n", ingressKey)
 	c.router.RemoveRoute(ingress)
@@ -172,12 +178,13 @@ func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
 
 }
 func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
-	val, ok := ingress.Labels["ingress.class"]
+
 	algo := ingress.Annotations["lb/algo"]
-	if !ok || val != "prequal" {
-		log.Printf("[SKIP] Ingress %s/%s: not our class (got %q)\n", ingress.Namespace, ingress.Name, val)
+	if c.isIngressPrequal(ingress) == false {
+		log.Printf("[SKIP] Ingress %s/%s: not our class \n", ingress.Namespace, ingress.Name)
 		return
 	}
+
 	log.Printf("[EVENT] Ingress %s/%s triggered\n", ingress.Namespace, ingress.Name)
 	namespace := ingress.Namespace
 	syncedKeys := make(map[string]bool)

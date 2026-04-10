@@ -33,3 +33,6 @@ bin/
 # .idea/
 # .vscode/
 notes.md
+skill.md
+.omc/*
+.claude/*

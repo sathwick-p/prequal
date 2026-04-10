@@ -51,7 +51,7 @@ So the answer is:
 
 ## 2. Current Repository Assessment
 
-## What exists today
+### What exists today
 
 - `main.go` wires informers, queue, controller, proxy server, and debug server.
 - `controller/controller.go` performs reconciliation from `Ingress` and `EndpointSlice` state into:
@@ -63,7 +63,7 @@ So the answer is:
 - `probe/probe.go` is a sidecar-style observer for connection information.
 - `deploy/controller.yaml` and `test.yaml` provide a basic Kubernetes deployment story.
 
-## What is good
+### What is good
 
 - The split between controller/router/backend store/proxy is sensible.
 - Using informer caches plus a workqueue is the right controller pattern.
@@ -71,7 +71,7 @@ So the answer is:
 - Using a radix tree for longest-prefix path matching is a good direction.
 - A separate probe process is a reasonable experiment if you want richer balancing signals later.
 
-## What is weak or incomplete
+### What is weak or incomplete
 
 - Ingress class handling is non-standard: the code uses `metadata.labels["ingress.class"]` instead of `spec.ingressClassName` and/or the legacy annotation.
 - The proxy always chooses the first backend, so the system is not yet a load balancer in practice.
@@ -86,7 +86,7 @@ So the answer is:
 
 ## 3. Is The Architecture Valid?
 
-## Short answer
+### Short answer
 
 Yes, with one important clarification:
 
@@ -94,7 +94,7 @@ You are not yet building a full "Ingress Controller competitor". You are buildin
 
 That is the right scope.
 
-## Why the architecture is valid
+### Why the architecture is valid
 
 The control-plane/data-plane split is correct:
 
@@ -109,7 +109,7 @@ The control-plane/data-plane split is correct:
 
 This is how serious systems are structured conceptually, even if mature projects split responsibilities across separate components or embed Envoy/NGINX instead of using Go's `ReverseProxy`.
 
-## Why the architecture is not yet complete
+### Why the architecture is not yet complete
 
 The architecture notes in `arch.md` are ahead of the code. The current repo does not yet fully implement:
 
@@ -127,7 +127,7 @@ That is fine. It means your next step should be "finish the core platform shape"
 
 ## 4. Architectural Judgment: What To Keep, What To Change
 
-## Keep
+### Keep
 
 - informer + workqueue controller model
 - in-memory routing state
@@ -136,7 +136,7 @@ That is fine. It means your next step should be "finish the core platform shape"
 - `EndpointSlice`-driven backend discovery
 - sidecar/probe as an experiment, not as a hard dependency for the first stable version
 
-## Change
+### Change
 
 - introduce explicit internal domain models instead of passing Kubernetes objects deep into routing logic
 - introduce a selector/algorithm interface now, before adding more balancing behavior
@@ -149,7 +149,7 @@ That is fine. It means your next step should be "finish the core platform shape"
   - proxying
 - add observability before adding advanced heuristics
 
-## Architectural target after the next major phase
+### Architectural target after the next major phase
 
 Aim for these packages/concepts:
 
@@ -243,7 +243,7 @@ Use it later as an enhancement layer.
 
 The next direction should be:
 
-## Phase 1: Stabilize the core controller and proxy
+### Phase 1: Stabilize the core controller and proxy
 
 Implement the minimum system that is correct, testable, and extensible:
 
@@ -258,7 +258,7 @@ Implement the minimum system that is correct, testable, and extensible:
 
 Do not make the probe sidecar central yet.
 
-## Phase 2: Add algorithmic value safely
+### Phase 2: Add algorithmic value safely
 
 After the core works:
 
@@ -273,7 +273,7 @@ Only after this should you attempt:
 - EWMA latency based selection
 - prequalification logic driven by probe data
 
-## Phase 3: Validate scale and operator experience
+### Phase 3: Validate scale and operator experience
 
 - churn tests
 - higher route counts
@@ -288,9 +288,9 @@ Only after this should you attempt:
 
 This section is about what you should learn in parallel with implementation.
 
-## Learning Track A: Kubernetes controllers
+### Learning Track A: Kubernetes controllers
 
-### Learn
+#### Learn
 
 - informer lifecycle
 - listers vs direct client calls
@@ -300,13 +300,13 @@ This section is about what you should learn in parallel with implementation.
 - tombstones and delete handling
 - cache sync guarantees
 
-### Learn it by doing
+#### Learn it by doing
 
 - trace the current event flow from informer event to queue to `syncKey`
 - write tests that feed fake ingress and endpointslice objects into the controller logic
 - simulate add/update/delete events and verify route/backend state
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should be able to explain:
 
@@ -314,9 +314,9 @@ You should be able to explain:
 - why reconciliation must be idempotent
 - how informer cache state differs from live API state
 
-## Learning Track B: Kubernetes ingress semantics
+### Learning Track B: Kubernetes ingress semantics
 
-### Learn
+#### Learn
 
 - `Ingress` rule structure
 - path precedence rules
@@ -325,13 +325,13 @@ You should be able to explain:
 - `IngressClass`
 - legacy vs current ingress-class handling
 
-### Learn it by doing
+#### Learn it by doing
 
 - create a matrix of ingress manifests for host/path cases
 - turn that matrix into unit and integration tests
 - compare your router behavior with expected Kubernetes semantics
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should be able to state exactly how these should behave:
 
@@ -340,9 +340,9 @@ You should be able to state exactly how these should behave:
 - empty host / default host
 - default backend fallback
 
-## Learning Track C: Go concurrency and state management
+### Learning Track C: Go concurrency and state management
 
-### Learn
+#### Learn
 
 - mutex design
 - copy-on-read vs copy-on-write
@@ -350,19 +350,19 @@ You should be able to state exactly how these should behave:
 - data races in shared maps/slices
 - goroutine lifecycle and shutdown
 
-### Learn it by doing
+#### Learn it by doing
 
 - run tests with `go test -race ./...`
 - refactor state publication so readers see coherent snapshots
 - write tests around concurrent route reads and controller updates
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should be able to defend why your shared-state design is safe under concurrent traffic and reconciliation.
 
-## Learning Track D: Reverse proxy and transport behavior
+### Learning Track D: Reverse proxy and transport behavior
 
-### Learn
+#### Learn
 
 - `httputil.ReverseProxy`
 - connection reuse
@@ -371,13 +371,13 @@ You should be able to defend why your shared-state design is safe under concurre
 - retry boundaries
 - header forwarding and `X-Forwarded-*`
 
-### Learn it by doing
+#### Learn it by doing
 
 - add request timeout and transport configuration tests
 - inspect how upstream errors propagate
 - test backend failures and connection reuse behavior
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should understand the difference between:
 
@@ -386,9 +386,9 @@ You should understand the difference between:
 - request forwarding
 - upstream failure handling
 
-## Learning Track E: Load-balancing algorithms
+### Learning Track E: Load-balancing algorithms
 
-### Learn
+#### Learn
 
 - round robin
 - least connections
@@ -397,19 +397,19 @@ You should understand the difference between:
 - EWMA latency selection
 - stickiness tradeoffs
 
-### Learn it by doing
+#### Learn it by doing
 
 - start with a tiny `Selector` interface
 - write deterministic tests per algorithm
 - measure distribution fairness under simulated request patterns
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should be able to explain when each algorithm is better or worse.
 
-## Learning Track F: Observability and scale testing
+### Learning Track F: Observability and scale testing
 
-### Learn
+#### Learn
 
 - Prometheus metric types
 - RED/USE metrics
@@ -418,13 +418,13 @@ You should be able to explain when each algorithm is better or worse.
 - load generation
 - benchmark design
 
-### Learn it by doing
+#### Learn it by doing
 
 - expose request, backend, and reconciliation metrics
 - load test with `hey`, `vegeta`, or `k6`
 - record routing behavior under backend churn
 
-### Outcome you should reach
+#### Outcome you should reach
 
 You should be able to answer:
 
@@ -438,15 +438,15 @@ You should be able to answer:
 
 This roadmap is ordered for learning value and engineering correctness.
 
-## Milestone 1: Make routing semantics correct
+### Milestone 1: Make routing semantics correct
 
-### Goals
+#### Goals
 
 - support real ingress-class semantics
 - make route matching deterministic and test-covered
 - handle host/path/default backend behavior cleanly
 
-### Tasks
+#### Tasks
 
 - add ingress parsing helpers:
   - extract class
@@ -460,26 +460,26 @@ This roadmap is ordered for learning value and engineering correctness.
   - default backend handling
 - add unit tests for routing precedence
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - ingress API
 - router design
 - table-driven testing in Go
 
-### Exit criteria
+#### Exit criteria
 
 - route tests cover all path precedence cases in `test.yaml` plus additional edge cases
 - ingress manifests using `spec.ingressClassName` are supported
 - route behavior is deterministic and documented
 
-## Milestone 2: Introduce a real balancing abstraction
+### Milestone 2: Introduce a real balancing abstraction
 
-### Goals
+#### Goals
 
 - stop hardcoding `backends[0]`
 - make algorithm implementation a first-class concept
 
-### Tasks
+#### Tasks
 
 - create a `Selector` or `Balancer` interface
 - implement `round_robin`
@@ -487,7 +487,7 @@ This roadmap is ordered for learning value and engineering correctness.
 - keep algorithm state separate from raw endpoint storage
 - add deterministic tests for backend selection
 
-### Suggested interface shape
+#### Suggested interface shape
 
 ```go
 type Selector interface {
@@ -500,26 +500,26 @@ You may later split this into:
 - stateless selectors
 - stateful selectors
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - interface design
 - stateful algorithms in concurrent systems
 - fairness testing
 
-### Exit criteria
+#### Exit criteria
 
 - requests distribute across backends under repeated load
 - algorithm behavior is test-covered
 - adding a new algorithm does not require editing proxy core logic
 
-## Milestone 3: Harden controller reconciliation
+### Milestone 3: Harden controller reconciliation
 
-### Goals
+#### Goals
 
 - make sync behavior more reliable and understandable
 - reduce coupling and hidden state behavior
 
-### Tasks
+#### Tasks
 
 - refactor `syncIngress` into smaller pure-ish helper functions
 - define clearer mapping structures:
@@ -530,26 +530,26 @@ You may later split this into:
 - ensure removed or changed routes clean up backend state correctly
 - add controller unit tests with fake informers/listers or extracted pure functions
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - idempotent reconciliation
 - controller cleanup logic
 - testing with Kubernetes fake objects
 
-### Exit criteria
+#### Exit criteria
 
 - add/update/delete tests pass
 - route and backend state stay consistent after updates
 - queue reprocessing produces the same final state
 
-## Milestone 4: Add observability before sophistication
+### Milestone 4: Add observability before sophistication
 
-### Goals
+#### Goals
 
 - make the system understandable while running
 - expose enough signals to debug correctness and performance
 
-### Tasks
+#### Tasks
 
 - add Prometheus metrics:
   - request count
@@ -565,27 +565,27 @@ You may later split this into:
   - sync failures
 - add health/readiness endpoints for the controller process
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - metrics design
 - cardinality pitfalls
 - practical debugging of distributed systems
 
-### Exit criteria
+#### Exit criteria
 
 - you can explain what the system is doing without reading raw code
 - you can identify broken routes, empty backend sets, and proxy failures quickly
 
-## Milestone 5: Build the test pyramid
+### Milestone 5: Build the test pyramid
 
-### Goals
+#### Goals
 
 - make correctness enforceable
 - avoid regressions while you learn
 
-### Test layers
+#### Test layers
 
-#### Unit tests
+##### Unit tests
 
 - router matching
 - ingress parsing
@@ -593,13 +593,13 @@ You may later split this into:
 - selector algorithms
 - helper functions
 
-#### Integration tests
+##### Integration tests
 
 - controller reconciliation from fake ingress + endpointslice inputs
 - proxy forwarding to `httptest` backends
 - route updates reflected in live proxy behavior
 
-#### E2E tests
+##### E2E tests
 
 - deploy to `kind`
 - apply ingress + services + deployments
@@ -609,7 +609,7 @@ You may later split this into:
   - backend distribution
   - behavior after pod deletion
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - table-driven tests
 - `httptest`
@@ -617,20 +617,20 @@ You may later split this into:
 - race detector
 - black-box vs white-box testing
 
-### Exit criteria
+#### Exit criteria
 
 - CI-quality local test suite exists
 - `go test ./...` is meaningful
 - there is at least one repeatable cluster-level test workflow
 
-## Milestone 6: Add better algorithms
+### Milestone 6: Add better algorithms
 
-### Goals
+#### Goals
 
 - create actual product differentiation
 - build algorithm knowledge safely on top of stable infrastructure
 
-### Implementation order
+#### Implementation order
 
 1. round robin
 2. random
@@ -639,32 +639,32 @@ You may later split this into:
 5. header/IP hash stickiness
 6. EWMA latency
 
-### Notes
+#### Notes
 
 - least-connections needs active request accounting
 - EWMA latency needs careful decay and metric freshness
 - sticky routing needs clear fallback behavior when endpoints disappear
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - algorithmic tradeoffs
 - distributed systems approximation
 - state drift and noisy measurements
 
-### Exit criteria
+#### Exit criteria
 
 - each algorithm has unit tests
 - at least round robin, least connections, and hash-based selection have integration validation
 - metrics show per-algorithm behavior
 
-## Milestone 7: Integrate the probe sidecar deliberately
+### Milestone 7: Integrate the probe sidecar deliberately
 
-### Goals
+#### Goals
 
 - validate whether the sidecar signal adds real value
 - keep the main architecture correct even without it
 
-### Tasks
+#### Tasks
 
 - define a clear contract for probe data:
   - schema
@@ -674,7 +674,7 @@ You may later split this into:
 - cache and bound probe reads
 - add algorithm variants that optionally use probe signals
 
-### Critical warning
+#### Critical warning
 
 Do not make request forwarding depend on per-request probe lookups.
 
@@ -685,24 +685,24 @@ If you use probe data, it should be:
 - bounded by timeouts
 - ignored safely when stale
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - signal quality vs complexity
 - polling and cache design
 - failure containment
 
-### Exit criteria
+#### Exit criteria
 
 - probe-enhanced selection works as an optional layer
 - stale or missing probe data does not break routing
 
-## Milestone 8: Scale and performance validation
+### Milestone 8: Scale and performance validation
 
-### Goals
+#### Goals
 
 - prove the controller and proxy remain usable under realistic load and churn
 
-### Tasks
+#### Tasks
 
 - create load-test scripts
 - benchmark:
@@ -720,14 +720,14 @@ If you use probe data, it should be:
   - scaling deployments up/down
   - frequent ingress updates
 
-### What to learn while doing it
+#### What to learn while doing it
 
 - benchmarking methodology
 - profiling
 - memory and CPU analysis
 - scale bottleneck identification
 
-### Exit criteria
+#### Exit criteria
 
 - you have measured limits, not guesses
 - you know the next bottleneck
@@ -739,7 +739,7 @@ If you use probe data, it should be:
 
 Testing should not be a final phase. It should be built alongside each milestone.
 
-## Immediate test files to create
+### Immediate test files to create
 
 - `controller/router_test.go`
 - `controller/ingress_parser_test.go`
@@ -747,9 +747,9 @@ Testing should not be a final phase. It should be built alongside each milestone
 - `server/server_test.go`
 - `loadbalancer/prequal/selector_test.go`
 
-## Initial test cases
+### Initial test cases
 
-### Router tests
+#### Router tests
 
 - exact `/health` beats prefix `/`
 - `/api/v2` beats `/api`
@@ -757,7 +757,7 @@ Testing should not be a final phase. It should be built alongside each milestone
 - exact path does not match longer paths
 - route removal on ingress update/delete works correctly
 
-### Controller tests
+#### Controller tests
 
 - ingress add populates route and backend store
 - endpointslice update refreshes backend store
@@ -765,7 +765,7 @@ Testing should not be a final phase. It should be built alongside each milestone
 - endpoint readiness filtering works
 - named port and numeric port cases both work
 
-### Proxy tests
+#### Proxy tests
 
 - request is forwarded to matched backend
 - no route returns `404`
@@ -773,13 +773,13 @@ Testing should not be a final phase. It should be built alongside each milestone
 - backend error returns `502`
 - round robin distributes requests across backends
 
-### Concurrency and safety
+#### Concurrency and safety
 
 - `go test -race ./...`
 - repeated route updates while serving requests
 - repeated endpoint churn while selecting backends
 
-## E2E environment
+### E2E environment
 
 Use `kind` and automate:
 
@@ -815,7 +815,7 @@ This order matters because it keeps the system working while you increase sophis
 
 If you want the learning path to track implementation, use this sequence.
 
-## Week/Block 1: Controller fundamentals
+### Week/Block 1: Controller fundamentals
 
 - informers
 - listers
@@ -829,7 +829,7 @@ Build:
 - route parsing helpers
 - controller tests for add/update/delete
 
-## Week/Block 2: Routing and proxying
+### Week/Block 2: Routing and proxying
 
 - radix/prefix matching
 - `httputil.ReverseProxy`
@@ -842,7 +842,7 @@ Build:
 - proxy tests
 - health/debug endpoint cleanup
 
-## Week/Block 3: Load balancing basics
+### Week/Block 3: Load balancing basics
 
 - round robin
 - random
@@ -855,7 +855,7 @@ Build:
 - round robin implementation
 - algorithm-based route config
 
-## Week/Block 4: Observability and reliability
+### Week/Block 4: Observability and reliability
 
 - Prometheus metrics
 - structured logging
@@ -869,7 +869,7 @@ Build:
 - better logs
 - race-safe validation
 
-## Week/Block 5: Cluster-level validation
+### Week/Block 5: Cluster-level validation
 
 - `kind`
 - realistic test deployments
@@ -882,7 +882,7 @@ Build:
 - scale scripts
 - churn and failover tests
 
-## Week/Block 6+: Advanced algorithms and probe integration
+### Week/Block 6+: Advanced algorithms and probe integration
 
 - consistent hashing
 - EWMA latency
@@ -901,11 +901,11 @@ Build:
 
 If you only do one focused sprint next, do this exact sequence.
 
-## Sprint goal
+### Sprint goal
 
 Turn the project from "interesting prototype" into "correct, testable ingress controller core".
 
-## Sprint tasks
+### Sprint tasks
 
 1. Fix ingress-class handling.
 2. Add table-driven router tests.
@@ -916,14 +916,14 @@ Turn the project from "interesting prototype" into "correct, testable ingress co
 7. Add basic Prometheus metrics and health endpoints.
 8. Add `go test -race ./...` to your local validation workflow.
 
-## Sprint deliverables
+### Sprint deliverables
 
 - correct ingress parsing
 - real load balancing
 - meaningful automated tests
 - basic observability
 
-## Sprint learning outcomes
+### Sprint learning outcomes
 
 By the end of that sprint you should understand:
 
@@ -973,7 +973,7 @@ This section updates the earlier recommendation with a more precise direction fo
 - RIF: requests or connections in flight
 - estimated latency: backend response latency or connection-level latency
 
-## Short answer
+### Short answer
 
 Yes, learning eBPF here is a strong idea, but it should be used carefully.
 
@@ -987,13 +987,13 @@ The right architecture is:
 - use eBPF as an optional signal pipeline for deeper socket/network visibility
 - aggregate those signals safely across multiple ingress pods
 
-## What RIF should mean in this project
+### What RIF should mean in this project
 
 You need to define this clearly before implementing anything.
 
 There are two different meanings:
 
-### Option A: Request inflight count
+#### Option A: Request inflight count
 
 This means:
 
@@ -1015,7 +1015,7 @@ Why:
 - request-aware
 - works correctly even when HTTP keepalive reuses one TCP connection for many requests
 
-### Option B: Connection inflight count
+#### Option B: Connection inflight count
 
 This means:
 
@@ -1039,7 +1039,7 @@ But it is weaker than request inflight for HTTP load balancing because:
 - idle keepalive connections can distort the signal
 - HTTP/2 multiplexing breaks "one connection ~= one active request"
 
-## Recommendation
+### Recommendation
 
 Use this definition split:
 
@@ -1048,11 +1048,11 @@ Use this definition split:
 
 That gives you a correct baseline and still lets you learn eBPF meaningfully.
 
-## What estimated latency should mean
+### What estimated latency should mean
 
 You should also separate two kinds of latency:
 
-### Proxy-observed request latency
+#### Proxy-observed request latency
 
 This is:
 
@@ -1065,7 +1065,7 @@ This is the best signal for:
 - EWMA latency balancing
 - request-level routing decisions
 
-### Network/socket latency
+#### Network/socket latency
 
 This is:
 
@@ -1076,7 +1076,7 @@ This is:
 
 This is where eBPF can help, but it is not a drop-in replacement for request latency.
 
-## eBPF is a good fit for these cases
+### eBPF is a good fit for these cases
 
 - observing TCP connect/close lifecycle per backend pod
 - measuring connection establishment latency
@@ -1084,7 +1084,7 @@ This is where eBPF can help, but it is not a drop-in replacement for request lat
 - capturing kernel-level network health signals
 - building pod-local load hints without modifying the app container
 
-## eBPF is a poor first fit for these cases
+### eBPF is a poor first fit for these cases
 
 - exact HTTP inflight requests
 - exact per-request end-to-end latency in a keepalive-heavy proxy
@@ -1099,11 +1099,11 @@ If you run multiple ingress pods, you must decide whether balancing signals are:
 - local to each ingress pod
 - or globally shared across all ingress pods
 
-## Recommended model
+### Recommended model
 
 Start with local decision-making and optional global approximation.
 
-### Local signals per ingress pod
+#### Local signals per ingress pod
 
 Each ingress pod keeps:
 
@@ -1115,7 +1115,7 @@ This is fast and simple.
 
 It works well because each pod only needs to choose well for the requests it receives.
 
-### Optional cluster-wide signal sharing
+#### Optional cluster-wide signal sharing
 
 Add this only later if you need cluster-wide least-connections behavior.
 
@@ -1135,7 +1135,7 @@ Do not try to build a strongly consistent global load-balancing state first.
 
 That complexity is not worth it at this stage.
 
-## Best deployment shape for eBPF
+### Best deployment shape for eBPF
 
 For eBPF, the cleanest model is:
 
@@ -1156,7 +1156,7 @@ Why this is better than one sidecar per app pod:
 - one agent can observe many pods on the node
 - you avoid putting privileged logic in every workload pod
 
-## Data flow for the recommended architecture
+### Data flow for the recommended architecture
 
 1. Ingress proxy records request inflight and request latency locally.
 2. Node eBPF agent observes socket-level activity and exports connection metrics.
@@ -1166,7 +1166,7 @@ Why this is better than one sidecar per app pod:
    - proxy-local request inflight as the primary signal
    - optional eBPF connection/load hints as secondary signals
 
-## Important rule
+### Important rule
 
 Never make the request path depend on querying eBPF data synchronously.
 
@@ -1182,7 +1182,7 @@ Always use cached snapshots with:
 
 If you want this to be a learning track, do it in this order.
 
-## Stage 1: Networking and Linux basics
+### Stage 1: Networking and Linux basics
 
 Learn:
 
@@ -1201,7 +1201,7 @@ Implement:
   - connect latency
   - EWMA request latency
 
-## Stage 2: Proxy-native instrumentation first
+### Stage 2: Proxy-native instrumentation first
 
 Learn:
 
@@ -1220,7 +1220,7 @@ Why this comes first:
 
 - this gives you a correct baseline before eBPF
 
-## Stage 3: eBPF fundamentals
+### Stage 3: eBPF fundamentals
 
 Learn:
 
@@ -1239,7 +1239,7 @@ Implement:
   - active connections per pod/backend IP
   - connect latency samples if available from chosen hooks
 
-## Stage 4: Kubernetes identity mapping
+### Stage 4: Kubernetes identity mapping
 
 Learn:
 
@@ -1255,7 +1255,7 @@ Implement:
   - service key
   - endpoint key
 
-## Stage 5: Aggregate and consume metrics safely
+### Stage 5: Aggregate and consume metrics safely
 
 Learn:
 
@@ -1270,7 +1270,7 @@ Implement:
 - fallback behavior when metrics are missing
 - metrics snapshot format for debugging
 
-## Stage 6: Algorithm experiments
+### Stage 6: Algorithm experiments
 
 Learn:
 
@@ -1290,7 +1290,7 @@ Implement:
 
 Follow this exact order.
 
-## Step 1: Add correct request-level metrics in the ingress
+### Step 1: Add correct request-level metrics in the ingress
 
 Implement:
 
@@ -1300,7 +1300,7 @@ Implement:
 
 Do not start with eBPF before this exists.
 
-## Step 2: Build least-connections and EWMA selectors without eBPF
+### Step 2: Build least-connections and EWMA selectors without eBPF
 
 Implement:
 
@@ -1309,7 +1309,7 @@ Implement:
 
 This proves your balancing framework.
 
-## Step 3: Prototype eBPF as a separate node agent
+### Step 3: Prototype eBPF as a separate node agent
 
 Implement:
 
@@ -1322,7 +1322,7 @@ Success criteria:
 
 - you can print active connection counts per backend pod reliably
 
-## Step 4: Add a metrics API between eBPF agent and ingress
+### Step 4: Add a metrics API between eBPF agent and ingress
 
 Implement one of:
 
@@ -1336,7 +1336,7 @@ Recommended first choice:
 
 Keep it simple.
 
-## Step 5: Ingest eBPF metrics into the ingress as optional hints
+### Step 5: Ingest eBPF metrics into the ingress as optional hints
 
 Implement:
 
@@ -1345,7 +1345,7 @@ Implement:
 - freshness TTL
 - selector fallback when metrics are stale
 
-## Step 6: Compare algorithm quality
+### Step 6: Compare algorithm quality
 
 Test:
 
@@ -1361,7 +1361,7 @@ Measure:
 - fairness across backends
 - recovery under pod churn
 
-## Step 7: Decide if eBPF adds enough value
+### Step 7: Decide if eBPF adds enough value
 
 Possible outcomes:
 

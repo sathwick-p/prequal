@@ -1,4 +1,4 @@
-module main
+module prequal
 
 go 1.25.4
 

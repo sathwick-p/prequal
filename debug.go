@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
-	"main/controller"
+	"prequal/controller"
 	"net/http"
 )
 
