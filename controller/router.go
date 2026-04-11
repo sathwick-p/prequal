@@ -2,9 +2,9 @@ package controller
 
 import (
 	"log"
+	"prequal/tree"
 	"sync"
 
-	radix "github.com/armon/go-radix"
 	networkingv1 "k8s.io/api/networking/v1"
 )
 
@@ -14,16 +14,8 @@ type Router struct {
 }
 type HostConfig struct {
 	Host  string
-	Paths []*PathConfig
-	tree  *radix.Tree
-}
-
-type PathConfig struct {
-	Path      string
-	PathType  string
-	Key       string
-	Port      int32
-	Algorithm string
+	Paths []*tree.PathConfig
+	trie  *tree.SegmentNode
 }
 
 func NewRouter() *Router {
@@ -45,8 +37,8 @@ func (r *Router) AddRoute(host string, path string, pathType *networkingv1.PathT
 	if !exists {
 		hostconfig = &HostConfig{
 			Host:  host,
-			Paths: make([]*PathConfig, 0),
-			tree:  radix.New(),
+			Paths: make([]*tree.PathConfig, 0),
+			trie:  tree.NewSegmentNode(),
 		}
 		r.routes[host] = hostconfig
 	}
@@ -57,12 +49,12 @@ func (r *Router) AddRoute(host string, path string, pathType *networkingv1.PathT
 			p.Key = key
 			p.Port = port
 			p.Algorithm = algo
-			hostconfig.tree.Insert(path, p)
+			hostconfig.trie.Insert(path, p)
 			return nil
 		}
 	}
 	// New path
-	pathConfig := &PathConfig{
+	pathConfig := &tree.PathConfig{
 		Path:      path,
 		PathType:  pathTypeStr,
 		Key:       key,
@@ -70,7 +62,7 @@ func (r *Router) AddRoute(host string, path string, pathType *networkingv1.PathT
 		Algorithm: algo,
 	}
 	hostconfig.Paths = append(hostconfig.Paths, pathConfig)
-	hostconfig.tree.Insert(path, pathConfig)
+	hostconfig.trie.Insert(path, pathConfig)
 	log.Printf("[ROUTER] Added host: %s\n", host)
 	return nil
 }
@@ -93,10 +85,10 @@ func (r *Router) RemoveRoute(ingress *networkingv1.Ingress) {
 		pathsToRemove := make(map[string]bool)
 		for _, path := range rule.HTTP.Paths {
 			pathsToRemove[path.Path] = true
-			hostconfig.tree.Delete(path.Path)
+			hostconfig.trie.Delete(path.Path)
 		}
 
-		filtered := make([]*PathConfig, 0, len(hostconfig.Paths))
+		filtered := make([]*tree.PathConfig, 0, len(hostconfig.Paths))
 		for _, p := range hostconfig.Paths {
 			if !pathsToRemove[p.Path] {
 				filtered = append(filtered, p)
@@ -111,7 +103,7 @@ func (r *Router) RemoveRoute(ingress *networkingv1.Ingress) {
 		}
 	}
 }
-func (r *Router) Match(host, path string) *PathConfig {
+func (r *Router) Match(host, path string) *tree.PathConfig {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -123,16 +115,7 @@ func (r *Router) Match(host, path string) *PathConfig {
 		}
 	}
 
-	_, val, found := hostconfig.tree.LongestPrefix(path)
-	if !found {
-		return nil
-	}
-	pathConfig := val.(*PathConfig)
-
-	if pathConfig.PathType == "Exact" && pathConfig.Path != path {
-		return nil
-	}
-	return pathConfig
+	return hostconfig.trie.Match(path)
 }
 func (r *Router) GetAllRoutes() map[string]*HostConfig {
 	r.mu.RLock()

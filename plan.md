@@ -1,1376 +1,556 @@
-# Prequal: Architecture Review, Learning Roadmap, and Implementation Plan
+# Prequal: Corrected Architecture Review and Implementation Plan
 
 ## 1. Executive Summary
 
-The project is moving in a valid direction.
+This project is moving in a good direction, but the right framing is:
 
-You are building a custom Kubernetes ingress controller with:
+- build a standards-aware custom Kubernetes ingress controller first
+- make the data plane support pluggable backend-selection algorithms
+- implement a Kubernetes-friendly adaptation of the Prequal paper on top of that core
+- use a sidecar plus eBPF to avoid application source-code changes
+- scope the first serious implementation to `HTTP/1.1` backends
 
-- a control plane that watches cluster state
-- a data plane that routes live traffic
-- room for custom backend-selection algorithms
-- an experimental sidecar/probe mechanism for richer load-balancing signals
+That is a valid and ambitious systems project.
 
-That is a strong learning project because it forces you to understand:
+The architecture is sound as a foundation:
 
-- Kubernetes controllers and informers
-- routing and reverse proxies
-- endpoint discovery and reconciliation
-- concurrency in Go
-- observability
-- testing distributed systems
-- performance and scale tradeoffs
+- control plane watches Kubernetes objects and reconciles desired routing state
+- data plane matches requests and proxies them to selected backends
+- backend selection can evolve from round robin to RIF-aware and then Prequal-style selection
+- sidecar instrumentation can upgrade signal quality without requiring application changes
 
-The high-level architecture is good, but the implementation is still in the "prototype proving the core loop" stage, not the "valid ingress controller" stage yet.
+The current repository is no longer just a toy prototype:
 
-Right now the repository proves these ideas:
+- it watches `Ingress` and `EndpointSlice`
+- it builds an in-memory route table
+- it maintains backend endpoint state
+- it proxies live traffic to discovered backends
+- it already has a selector abstraction
+- it already has round-robin selection
+- it already has basic Prometheus metrics
+- it already has unit and integration-style tests
 
-- watch `Ingress` and `EndpointSlice`
-- build an in-memory routing table
-- map routes to backend endpoints
-- proxy live traffic to discovered backends
+But it is still not a real ingress controller yet, and it is not a real Prequal implementation yet.
 
-What is still missing is the production-critical layer around that core:
+The most important conclusion is:
 
-- clean API boundaries
-- correct ingress-class handling
-- real load-balancing strategies
-- failure handling and health policy
-- proper metrics and observability
-- systematic tests
-- scale and benchmark validation
-
-So the answer is:
-
-- direction: correct
-- architecture: valid as a foundation
-- current implementation: underbuilt relative to the stated ambition
-- next move: harden the core before adding advanced algorithm ideas
+- the project idea is good
+- the architecture is valid
+- the end goal is realistic
+- the next priority is ingress correctness and protocol-correct signal collection, not advanced balancing heuristics
 
 ---
 
-## 2. Current Repository Assessment
+## 2. Correct Assessment Of The Current Repository
 
 ### What exists today
 
-- `main.go` wires informers, queue, controller, proxy server, and debug server.
-- `controller/controller.go` performs reconciliation from `Ingress` and `EndpointSlice` state into:
-  - a route table
-  - a backend endpoint store
-  - a service-to-ingress mapping for resync triggers
-- `controller/router.go` provides host + path matching using a radix tree.
-- `server/server.go` proxies requests to the selected backend.
-- `probe/probe.go` is a sidecar-style observer for connection information.
-- `deploy/controller.yaml` and `test.yaml` provide a basic Kubernetes deployment story.
+- `main.go` wires informers, queue, controller, proxy server, and debug server
+- `controller/controller.go` reconciles `Ingress` and `EndpointSlice` into:
+  - router state
+  - backend endpoint state
+  - service-to-ingress mappings for resyncs
+- `controller/router.go` performs host and path matching using a radix tree
+- `loadbalancer/selector.go` defines a selector interface
+- `loadbalancer/roundrobin/rr.go` implements round-robin backend selection
+- `server/server.go` proxies requests using the selected backend
+- `observability/metrics.go` exports basic Prometheus metrics
+- `probe/probe.go` provides an early sidecar-style observer
+- controller and proxy tests already exist
 
-### What is good
+### What is already good
 
-- The split between controller/router/backend store/proxy is sensible.
-- Using informer caches plus a workqueue is the right controller pattern.
-- Using `EndpointSlice` instead of old `Endpoints` is the correct modern choice.
-- Using a radix tree for longest-prefix path matching is a good direction.
-- A separate probe process is a reasonable experiment if you want richer balancing signals later.
+- informer plus workqueue controller model is correct
+- `EndpointSlice` usage is the right modern Kubernetes choice
+- the split between controller, router, backend store, selector, and proxy is sensible
+- a separate algorithm interface already exists
+- round robin is already implemented
+- the project already has tests and basic metrics, which is better than an empty prototype
 
-### What is weak or incomplete
+### What is still incomplete or incorrect
 
-- Ingress class handling is non-standard: the code uses `metadata.labels["ingress.class"]` instead of `spec.ingressClassName` and/or the legacy annotation.
-- The proxy always chooses the first backend, so the system is not yet a load balancer in practice.
-- There is no explicit algorithm interface yet, even though the architecture aims to support multiple strategies.
-- Backend state is only endpoint-address based; there is no health, latency, inflight, or readiness model beyond EndpointSlice readiness.
-- The route and store models are tightly coupled to current implementation details.
-- There are no unit, integration, or e2e tests.
-- There is no metrics pipeline for controller reconciliation or proxy traffic.
-- Multi-replica controller behavior and data-plane scale behavior have not been validated.
-
----
-
-## 3. Is The Architecture Valid?
-
-### Short answer
-
-Yes, with one important clarification:
-
-You are not yet building a full "Ingress Controller competitor". You are building a custom ingress gateway/controller prototype that can evolve into one.
-
-That is the right scope.
-
-### Why the architecture is valid
-
-The control-plane/data-plane split is correct:
-
-- control plane:
-  - watch Kubernetes resources
-  - reconcile desired routing state
-  - publish immutable-ish routing/backend config into memory
-- data plane:
-  - perform request matching
-  - select a backend
-  - proxy traffic efficiently
-
-This is how serious systems are structured conceptually, even if mature projects split responsibilities across separate components or embed Envoy/NGINX instead of using Go's `ReverseProxy`.
-
-### Why the architecture is not yet complete
-
-The architecture notes in `arch.md` are ahead of the code. The current repo does not yet fully implement:
-
-- standard ingress API semantics
-- robust reconciliation model
-- pluggable balancing algorithms
-- health-aware endpoint selection
-- observability and operator-facing debugging
-- correctness tests around routing precedence and updates
-- scale behavior under churn
-
-That is fine. It means your next step should be "finish the core platform shape", not "jump to fancy algorithms first".
+- ingress semantics are not fully standards-correct yet
+- ingress class support is incomplete and uses a non-standard label fallback
+- path matching does not fully match Kubernetes `Prefix` behavior
+- exact-route fallback behavior is not correct
+- routing state and backend state are published as separate mutable structures
+- there is no full ingress-controller operator story yet:
+  - no `IngressClass` resource handling
+  - no ingress status updates
+  - no TLS support
+  - no production-oriented service exposure model
+- the sidecar currently counts TCP socket state, which is not equivalent to request-level RIF
+- there is no real Prequal probe pool, HCL rule, async probing loop, or request-aware latency model yet
 
 ---
 
-## 4. Architectural Judgment: What To Keep, What To Change
+## 3. Project Scope
 
-### Keep
+### Final target
 
+The end goal is a real custom ingress controller.
+
+That means this project should eventually support:
+
+- standard Kubernetes ingress behavior
+- correct host and path routing semantics
+- ingress class ownership
+- robust endpoint discovery and reconciliation
+- stable proxying behavior
+- operator-facing observability
+- pluggable balancing policies
+
+### Algorithm target
+
+The balancing goal is not generic "smart load balancing." It is specifically a Kubernetes adaptation of the Prequal paper:
+
+- use RIF and latency, not CPU, as the primary decision signals
+- use probing rather than only passive historical metrics
+- use HCL rather than a linear combination of latency and RIF
+- use bounded probe pools and async probing
+
+### Protocol scope
+
+The initial target is `HTTP/1.1` backends only.
+
+This is the correct first scope because:
+
+- request inference is much more feasible than for `HTTP/2` or gRPC
+- keep-alive still exists, but request boundaries are easier to reason about
+- the sidecar can be useful earlier
+- ingress correctness can be developed without immediately solving multiplexed protocols
+
+Explicit non-goal for the first phase:
+
+- do not treat `HTTP/2` and gRPC as solved
+
+---
+
+## 4. Architecture Judgment
+
+### What to keep
+
+- control-plane/data-plane split
 - informer + workqueue controller model
 - in-memory routing state
-- separate router abstraction
-- separate proxy abstraction
 - `EndpointSlice`-driven backend discovery
-- sidecar/probe as an experiment, not as a hard dependency for the first stable version
+- selector abstraction
+- sidecar as an optional signal-upgrade layer
+- independent per-proxy decision-making with no shared balancing state across proxies
 
-### Change
+### What to change
 
-- introduce explicit internal domain models instead of passing Kubernetes objects deep into routing logic
-- introduce a selector/algorithm interface now, before adding more balancing behavior
-- treat the sidecar signal as optional metadata, not required for correctness
-- formalize config ownership:
-  - ingress parsing
-  - endpoint resolution
-  - routing state publication
-  - backend selection
-  - proxying
-- add observability before adding advanced heuristics
+- move toward explicit internal models instead of coupling everything directly to Kubernetes object details
+- fix routing semantics before more algorithm work
+- publish route and backend state more coherently
+- make the sidecar request-aware rather than connection-aware
+- keep the data plane correct even when no sidecar is present
 
-### Architectural target after the next major phase
+### Target package shape
 
-Aim for these packages/concepts:
+You do not need to refactor everything immediately, but the code should move toward these boundaries:
 
 - `controller/`
-  - watchers, queue workers, reconciliation
+  - watches, queue workers, reconciliation
 - `routing/`
-  - host/path matching and route table
+  - route model, host/path matching, precedence rules
 - `discovery/`
-  - endpoint resolution and endpoint metadata normalization
+  - endpoint normalization, endpoint metadata
 - `balancer/`
-  - interfaces and algorithms
+  - selector interface, round robin, least-connections, Prequal
 - `proxy/`
-  - request forwarding and transport behavior
+  - request forwarding, transport behavior, per-backend accounting
+- `signals/`
+  - RIF tracking, latency estimation, sidecar integration, probe handling
 - `observability/`
-  - metrics, logs, health/debug endpoints
+  - metrics, logs, debug, health
 
-You do not need to do a full package split immediately, but your code changes should move toward these boundaries.
+### Multi-proxy operation model
+
+Each ingress proxy instance should operate independently.
+
+That means:
+
+- each proxy keeps its own local in-memory balancing state
+- each proxy maintains its own probe pool
+- there is no shared global coordination layer for backend selection
+- sidecar responses expose server-local signals, but selection decisions remain proxy-local
+
+This is an important architectural property because it:
+
+- avoids coordination overhead between proxies
+- preserves horizontal scalability
+- stays closer to the distributed spirit of the Prequal paper
+- makes failure domains simpler
 
 ---
 
-## 5. Key Risks In The Current Code
+## 5. Critical Issues To Fix First
 
-These are the most important issues to address next.
+### 5.1 Ingress semantics
 
-### 5.1 Ingress API semantics are not correct yet
-
-Current code filters using a label named `ingress.class`. That is not how ingress class is typically expressed.
+The project wants to become a real ingress controller, so standards correctness matters.
 
 You should support:
 
 - `spec.ingressClassName`
-- optionally the legacy annotation `kubernetes.io/ingress.class`
+- legacy annotation `kubernetes.io/ingress.class`
+- eventually `IngressClass` resources
 
-Why this matters:
+You should not depend on:
 
-- correctness
-- compatibility with normal Kubernetes usage
-- easier testing with standard manifests
+- `metadata.labels["ingress.class"]` as a primary compatibility mechanism
 
-### 5.2 The system does not really load balance yet
+### 5.2 Kubernetes path matching correctness
 
-`server/server.go` always forwards to `backends[0]`.
+Current routing is based on radix longest-prefix lookup, but Kubernetes `Prefix` matching is path-element aware, not raw byte-prefix matching.
 
 That means:
 
-- no fairness
-- no algorithm behavior
-- no resilience to uneven load
-- no validation of the core product idea
+- `/api` should match `/api` and `/api/...`
+- `/api` should not match `/apiv2`
 
-### 5.3 Reconciliation and state publication need stronger modeling
+This needs to be fixed early because otherwise the controller is not ingress-correct.
 
-Today the controller updates router state and endpoint state as separate mutable structures.
+### 5.3 Exact vs prefix fallback behavior
 
-This works for a prototype, but it becomes fragile when you add:
+If the longest raw prefix is an `Exact` route that does not exactly match the request path, the router should still be able to fall back to a shorter valid prefix route where appropriate.
 
-- multiple algorithms
-- metadata-driven endpoint selection
-- retries
-- richer routing rules
+That behavior is currently too naive and should be corrected before advanced selector work.
 
-The next version should move toward a clearer internal model such as:
+### 5.4 State publication model
+
+Right now route state and backend state are updated separately.
+
+That is workable for the current code, but it will become fragile once you add:
+
+- richer route semantics
+- policy selection
+- backend metadata
+- signal-driven selection
+- multiple concurrent reconciliation events
+
+Move toward explicit domain models such as:
 
 - `Route`
+- `BackendRef`
 - `BackendSet`
-- `EndpointMetadata`
+- `EndpointState`
 - `SelectionPolicy`
 
-### 5.4 Testing is effectively absent
+### 5.5 Sidecar signal fidelity
 
-`go test ./...` passes because there are no tests.
+This is the biggest conceptual risk in the Prequal adaptation.
 
-That is the largest project risk right now because controllers and routing code fail in edge cases, not only in happy paths.
+The reason for sidecar plus eBPF is valid:
 
-### 5.5 The sidecar/probe idea is promising but premature as a primary mechanism
+- avoid requiring application code changes
+- make signal collection deployable across arbitrary workloads
 
-The sidecar currently exposes observed connection stats, which could be useful.
-
-But if you push too hard on this too early, you risk spending time on:
-
-- noisy signals
-- consistency issues
-- probe polling complexity
-- coupling traffic policy to pod-local observations before the base system is stable
-
-Use it later as an enhancement layer.
-
----
-
-## 6. What To Implement Next
-
-The next direction should be:
-
-### Phase 1: Stabilize the core controller and proxy
-
-Implement the minimum system that is correct, testable, and extensible:
-
-- standard ingress-class handling
-- explicit route model
-- explicit backend-selection interface
-- round-robin algorithm first
-- deterministic router tests
-- controller reconciliation tests
-- proxy integration tests
-- Prometheus metrics and structured logs
-
-Do not make the probe sidecar central yet.
-
-### Phase 2: Add algorithmic value safely
-
-After the core works:
-
-- least-connections
-- random-two-choices
-- optional sticky routing / hash-based selection
-- endpoint metadata and live counters
-
-Only after this should you attempt:
-
-- sidecar-informed balancing
-- EWMA latency based selection
-- prequalification logic driven by probe data
-
-### Phase 3: Validate scale and operator experience
-
-- churn tests
-- higher route counts
-- multiple services and hosts
-- replica behavior
-- benchmark reconciliation latency
-- benchmark request throughput and tail latency
-
----
-
-## 7. Detailed Learning Plan
-
-This section is about what you should learn in parallel with implementation.
-
-### Learning Track A: Kubernetes controllers
-
-#### Learn
-
-- informer lifecycle
-- listers vs direct client calls
-- workqueue semantics
-- reconciliation loops
-- idempotent sync functions
-- tombstones and delete handling
-- cache sync guarantees
-
-#### Learn it by doing
-
-- trace the current event flow from informer event to queue to `syncKey`
-- write tests that feed fake ingress and endpointslice objects into the controller logic
-- simulate add/update/delete events and verify route/backend state
-
-#### Outcome you should reach
-
-You should be able to explain:
-
-- why controllers queue keys instead of doing work directly in event handlers
-- why reconciliation must be idempotent
-- how informer cache state differs from live API state
-
-### Learning Track B: Kubernetes ingress semantics
-
-#### Learn
-
-- `Ingress` rule structure
-- path precedence rules
-- exact vs prefix matching
-- default backends
-- `IngressClass`
-- legacy vs current ingress-class handling
-
-#### Learn it by doing
-
-- create a matrix of ingress manifests for host/path cases
-- turn that matrix into unit and integration tests
-- compare your router behavior with expected Kubernetes semantics
-
-#### Outcome you should reach
-
-You should be able to state exactly how these should behave:
-
-- `/api` vs `/api/v2`
-- exact match `/health`
-- empty host / default host
-- default backend fallback
-
-### Learning Track C: Go concurrency and state management
-
-#### Learn
-
-- mutex design
-- copy-on-read vs copy-on-write
-- immutability as a concurrency simplifier
-- data races in shared maps/slices
-- goroutine lifecycle and shutdown
-
-#### Learn it by doing
-
-- run tests with `go test -race ./...`
-- refactor state publication so readers see coherent snapshots
-- write tests around concurrent route reads and controller updates
-
-#### Outcome you should reach
-
-You should be able to defend why your shared-state design is safe under concurrent traffic and reconciliation.
-
-### Learning Track D: Reverse proxy and transport behavior
-
-#### Learn
-
-- `httputil.ReverseProxy`
-- connection reuse
-- transport tuning
-- timeout settings
-- retry boundaries
-- header forwarding and `X-Forwarded-*`
-
-#### Learn it by doing
-
-- add request timeout and transport configuration tests
-- inspect how upstream errors propagate
-- test backend failures and connection reuse behavior
-
-#### Outcome you should reach
-
-You should understand the difference between:
-
-- route selection
-- connection management
-- request forwarding
-- upstream failure handling
-
-### Learning Track E: Load-balancing algorithms
-
-#### Learn
-
-- round robin
-- least connections
-- power of two choices
-- consistent hashing
-- EWMA latency selection
-- stickiness tradeoffs
-
-#### Learn it by doing
-
-- start with a tiny `Selector` interface
-- write deterministic tests per algorithm
-- measure distribution fairness under simulated request patterns
-
-#### Outcome you should reach
-
-You should be able to explain when each algorithm is better or worse.
-
-### Learning Track F: Observability and scale testing
-
-#### Learn
-
-- Prometheus metric types
-- RED/USE metrics
-- controller metrics
-- p50/p95/p99 latency
-- load generation
-- benchmark design
-
-#### Learn it by doing
-
-- expose request, backend, and reconciliation metrics
-- load test with `hey`, `vegeta`, or `k6`
-- record routing behavior under backend churn
-
-#### Outcome you should reach
-
-You should be able to answer:
-
-- how many routes/endpoints can this handle?
-- what happens during endpoint churn?
-- what is the latency overhead of the proxy?
-
----
-
-## 8. Implementation Roadmap
-
-This roadmap is ordered for learning value and engineering correctness.
-
-### Milestone 1: Make routing semantics correct
-
-#### Goals
-
-- support real ingress-class semantics
-- make route matching deterministic and test-covered
-- handle host/path/default backend behavior cleanly
-
-#### Tasks
-
-- add ingress parsing helpers:
-  - extract class
-  - extract rules
-  - normalize backend service references
-- define internal route structs independent from raw Kubernetes types
-- improve router semantics for:
-  - exact match
-  - longest prefix
-  - default host
-  - default backend handling
-- add unit tests for routing precedence
-
-#### What to learn while doing it
-
-- ingress API
-- router design
-- table-driven testing in Go
-
-#### Exit criteria
-
-- route tests cover all path precedence cases in `test.yaml` plus additional edge cases
-- ingress manifests using `spec.ingressClassName` are supported
-- route behavior is deterministic and documented
-
-### Milestone 2: Introduce a real balancing abstraction
-
-#### Goals
-
-- stop hardcoding `backends[0]`
-- make algorithm implementation a first-class concept
-
-#### Tasks
-
-- create a `Selector` or `Balancer` interface
-- implement `round_robin`
-- attach algorithm selection to route config
-- keep algorithm state separate from raw endpoint storage
-- add deterministic tests for backend selection
-
-#### Suggested interface shape
-
-```go
-type Selector interface {
-	Select(req *http.Request, endpoints []EndpointView) (EndpointView, error)
-}
-```
-
-You may later split this into:
-
-- stateless selectors
-- stateful selectors
-
-#### What to learn while doing it
-
-- interface design
-- stateful algorithms in concurrent systems
-- fairness testing
-
-#### Exit criteria
-
-- requests distribute across backends under repeated load
-- algorithm behavior is test-covered
-- adding a new algorithm does not require editing proxy core logic
-
-### Milestone 3: Harden controller reconciliation
-
-#### Goals
-
-- make sync behavior more reliable and understandable
-- reduce coupling and hidden state behavior
-
-#### Tasks
-
-- refactor `syncIngress` into smaller pure-ish helper functions
-- define clearer mapping structures:
-  - ingress -> routes
-  - service -> dependent routes
-  - route -> backend set
-- review delete/update behavior carefully
-- ensure removed or changed routes clean up backend state correctly
-- add controller unit tests with fake informers/listers or extracted pure functions
-
-#### What to learn while doing it
-
-- idempotent reconciliation
-- controller cleanup logic
-- testing with Kubernetes fake objects
-
-#### Exit criteria
-
-- add/update/delete tests pass
-- route and backend state stay consistent after updates
-- queue reprocessing produces the same final state
-
-### Milestone 4: Add observability before sophistication
-
-#### Goals
-
-- make the system understandable while running
-- expose enough signals to debug correctness and performance
-
-#### Tasks
-
-- add Prometheus metrics:
-  - request count
-  - request duration
-  - response status counts
-  - backend selection counts
-  - active backends per route
-  - reconciliation count/errors/duration
-- improve logs:
-  - route matched
-  - backend selected
-  - reconciliation result
-  - sync failures
-- add health/readiness endpoints for the controller process
-
-#### What to learn while doing it
-
-- metrics design
-- cardinality pitfalls
-- practical debugging of distributed systems
-
-#### Exit criteria
-
-- you can explain what the system is doing without reading raw code
-- you can identify broken routes, empty backend sets, and proxy failures quickly
-
-### Milestone 5: Build the test pyramid
-
-#### Goals
-
-- make correctness enforceable
-- avoid regressions while you learn
-
-#### Test layers
-
-##### Unit tests
-
-- router matching
-- ingress parsing
-- endpoint extraction
-- selector algorithms
-- helper functions
-
-##### Integration tests
-
-- controller reconciliation from fake ingress + endpointslice inputs
-- proxy forwarding to `httptest` backends
-- route updates reflected in live proxy behavior
-
-##### E2E tests
-
-- deploy to `kind`
-- apply ingress + services + deployments
-- send traffic through the controller
-- validate:
-  - route selection
-  - backend distribution
-  - behavior after pod deletion
-
-#### What to learn while doing it
-
-- table-driven tests
-- `httptest`
-- `kind`
-- race detector
-- black-box vs white-box testing
-
-#### Exit criteria
-
-- CI-quality local test suite exists
-- `go test ./...` is meaningful
-- there is at least one repeatable cluster-level test workflow
-
-### Milestone 6: Add better algorithms
-
-#### Goals
-
-- create actual product differentiation
-- build algorithm knowledge safely on top of stable infrastructure
-
-#### Implementation order
-
-1. round robin
-2. random
-3. power of two choices
-4. least connections
-5. header/IP hash stickiness
-6. EWMA latency
-
-#### Notes
-
-- least-connections needs active request accounting
-- EWMA latency needs careful decay and metric freshness
-- sticky routing needs clear fallback behavior when endpoints disappear
-
-#### What to learn while doing it
-
-- algorithmic tradeoffs
-- distributed systems approximation
-- state drift and noisy measurements
-
-#### Exit criteria
-
-- each algorithm has unit tests
-- at least round robin, least connections, and hash-based selection have integration validation
-- metrics show per-algorithm behavior
-
-### Milestone 7: Integrate the probe sidecar deliberately
-
-#### Goals
-
-- validate whether the sidecar signal adds real value
-- keep the main architecture correct even without it
-
-#### Tasks
-
-- define a clear contract for probe data:
-  - schema
-  - freshness window
-  - failure behavior
-- decide how controller or proxy retrieves probe data
-- cache and bound probe reads
-- add algorithm variants that optionally use probe signals
-
-#### Critical warning
-
-Do not make request forwarding depend on per-request probe lookups.
-
-If you use probe data, it should be:
-
-- cached
-- optional
-- bounded by timeouts
-- ignored safely when stale
-
-#### What to learn while doing it
-
-- signal quality vs complexity
-- polling and cache design
-- failure containment
-
-#### Exit criteria
-
-- probe-enhanced selection works as an optional layer
-- stale or missing probe data does not break routing
-
-### Milestone 8: Scale and performance validation
-
-#### Goals
-
-- prove the controller and proxy remain usable under realistic load and churn
-
-#### Tasks
-
-- create load-test scripts
-- benchmark:
-  - request throughput
-  - p95/p99 latency
-  - controller reconcile latency
-  - backend update propagation latency
-- test at increasing scales:
-  - 10 routes
-  - 100 routes
-  - 1000 routes
-  - increasing endpoint counts per service
-- simulate churn:
-  - pod restarts
-  - scaling deployments up/down
-  - frequent ingress updates
-
-#### What to learn while doing it
-
-- benchmarking methodology
-- profiling
-- memory and CPU analysis
-- scale bottleneck identification
-
-#### Exit criteria
-
-- you have measured limits, not guesses
-- you know the next bottleneck
-- architecture decisions are supported by data
-
----
-
-## 9. Testing Strategy In Detail
-
-Testing should not be a final phase. It should be built alongside each milestone.
-
-### Immediate test files to create
-
-- `controller/router_test.go`
-- `controller/ingress_parser_test.go`
-- `controller/controller_test.go`
-- `server/server_test.go`
-- `loadbalancer/prequal/selector_test.go`
-
-### Initial test cases
-
-#### Router tests
-
-- exact `/health` beats prefix `/`
-- `/api/v2` beats `/api`
-- unknown host falls back to default host only when appropriate
-- exact path does not match longer paths
-- route removal on ingress update/delete works correctly
-
-#### Controller tests
-
-- ingress add populates route and backend store
-- endpointslice update refreshes backend store
-- ingress delete removes route mappings
-- endpoint readiness filtering works
-- named port and numeric port cases both work
-
-#### Proxy tests
-
-- request is forwarded to matched backend
-- no route returns `404`
-- no backends returns `503`
-- backend error returns `502`
-- round robin distributes requests across backends
-
-#### Concurrency and safety
-
-- `go test -race ./...`
-- repeated route updates while serving requests
-- repeated endpoint churn while selecting backends
-
-### E2E environment
-
-Use `kind` and automate:
-
-- cluster creation
-- image build/load
-- controller deploy
-- test workload deploy
-- ingress apply
-- request validation
-- teardown
-
----
-
-## 10. Suggested Refactor Sequence
-
-Refactor in this order to avoid chaos.
-
-1. Add tests around current router behavior before changing it.
-2. Introduce ingress parsing helpers.
-3. Introduce internal route model.
-4. Introduce selector interface with round robin.
-5. Move proxy selection logic behind the selector.
-6. Add metrics and health endpoints.
-7. Refactor reconciliation internals for clarity.
-8. Add more algorithms.
-9. Add probe integration.
-
-This order matters because it keeps the system working while you increase sophistication.
-
----
-
-## 11. What You Need To Learn Exactly, In Order
-
-If you want the learning path to track implementation, use this sequence.
-
-### Week/Block 1: Controller fundamentals
-
-- informers
-- listers
-- workqueues
-- idempotent reconciliation
-- Kubernetes ingress resource structure
-
-Build:
-
-- ingress-class fix
-- route parsing helpers
-- controller tests for add/update/delete
-
-### Week/Block 2: Routing and proxying
-
-- radix/prefix matching
-- `httputil.ReverseProxy`
-- transport tuning
-- timeout behavior
-
-Build:
-
-- router correctness improvements
-- proxy tests
-- health/debug endpoint cleanup
-
-### Week/Block 3: Load balancing basics
-
-- round robin
-- random
-- least connections
-- state management for selectors
-
-Build:
-
-- selector interface
-- round robin implementation
-- algorithm-based route config
-
-### Week/Block 4: Observability and reliability
-
-- Prometheus metrics
-- structured logging
-- race detection
-- failure-mode testing
-
-Build:
-
-- metrics endpoint
-- request/reconcile metrics
-- better logs
-- race-safe validation
-
-### Week/Block 5: Cluster-level validation
-
-- `kind`
-- realistic test deployments
-- endpoint churn
-- benchmark tooling
-
-Build:
-
-- repeatable e2e workflow
-- scale scripts
-- churn and failover tests
-
-### Week/Block 6+: Advanced algorithms and probe integration
-
-- consistent hashing
-- EWMA latency
-- queueing/load heuristics
-- signal freshness and staleness handling
-
-Build:
-
-- advanced selectors
-- optional probe-assisted routing
-- measured comparison of algorithms
-
----
-
-## 12. Practical Next Sprint Plan
-
-If you only do one focused sprint next, do this exact sequence.
-
-### Sprint goal
-
-Turn the project from "interesting prototype" into "correct, testable ingress controller core".
-
-### Sprint tasks
-
-1. Fix ingress-class handling.
-2. Add table-driven router tests.
-3. Add controller tests for ingress + endpointslice reconciliation.
-4. Introduce a selector interface.
-5. Implement round robin.
-6. Update proxy to use the selector.
-7. Add basic Prometheus metrics and health endpoints.
-8. Add `go test -race ./...` to your local validation workflow.
-
-### Sprint deliverables
-
-- correct ingress parsing
-- real load balancing
-- meaningful automated tests
-- basic observability
-
-### Sprint learning outcomes
-
-By the end of that sprint you should understand:
-
-- how a controller actually reconciles cluster state
-- how route matching correctness is validated
-- how a reverse proxy and balancer interact
-- how to add features without destroying architecture
-
----
-
-## 13. Definition Of "Moving In The Right Direction"
-
-You are moving in the right direction if, after the next 2 to 3 milestones, the project can do all of this reliably:
-
-- watch ingress and endpointslice changes
-- build correct route state
-- distribute requests across live backends
-- survive backend churn
-- expose enough metrics/logs to debug behavior
-- pass unit and integration tests consistently
-- run repeatable e2e validation in `kind`
-
-If you cannot do those things yet, do not jump to advanced "prequal" intelligence. Finish the platform core first.
-
----
-
-## 14. Final Recommendation
-
-The best next direction is:
-
-- keep the architecture
-- harden the controller/proxy core
-- add tests before complexity
-- add round robin before advanced algorithms
-- treat the sidecar probe as a later optimization and research track
-
-In practical terms:
-
-build a clean, correct, test-covered ingress controller core first; then layer in smarter balancing.
-
----
-
-## 15. RIF And Estimated Latency: eBPF Strategy
-
-This section updates the earlier recommendation with a more precise direction for collecting:
-
-- RIF: requests or connections in flight
-- estimated latency: backend response latency or connection-level latency
-
-### Short answer
-
-Yes, learning eBPF here is a strong idea, but it should be used carefully.
-
-The right architecture is not:
-
-- "replace core balancing with eBPF immediately"
-
-The right architecture is:
-
-- keep proxy-level instrumentation as the source of truth for request lifecycle inside the ingress
-- use eBPF as an optional signal pipeline for deeper socket/network visibility
-- aggregate those signals safely across multiple ingress pods
-
-### What RIF should mean in this project
-
-You need to define this clearly before implementing anything.
-
-There are two different meanings:
-
-#### Option A: Request inflight count
-
-This means:
-
-- how many HTTP requests are currently being served for a backend
-
-This is the best signal for:
-
-- HTTP-aware least-connections
-- request scheduling inside your ingress proxy
-
-Best place to measure it:
-
-- inside your Go proxy process
+But for the sidecar to be useful, it should aim to infer request start and response completion, not just socket presence.
 
 Why:
 
-- exact
-- cheap
-- request-aware
-- works correctly even when HTTP keepalive reuses one TCP connection for many requests
+- TCP `ESTABLISHED` count is not request RIF
+- with `HTTP/1.1` keep-alive, one socket may be idle or active
+- connection count may undercount or misrepresent true concurrent in-flight requests
+- latency cannot be estimated correctly from socket presence alone
 
-#### Option B: Connection inflight count
-
-This means:
-
-- how many active TCP connections currently exist for a backend or pod
-
-This is the signal your current probe sidecar is closest to.
-
-Best place to measure it:
-
-- eBPF or kernel/proc observation
-
-Why:
-
-- visible without application instrumentation
-- useful for TCP-oriented traffic
-- useful as a rough load heuristic
-
-But it is weaker than request inflight for HTTP load balancing because:
-
-- one connection may carry many requests
-- idle keepalive connections can distort the signal
-- HTTP/2 multiplexing breaks "one connection ~= one active request"
-
-### Recommendation
-
-Use this definition split:
-
-- primary RIF for balancing: request inflight in the ingress proxy
-- secondary RIF for experiments: connection inflight from eBPF
-
-That gives you a correct baseline and still lets you learn eBPF meaningfully.
-
-### What estimated latency should mean
-
-You should also separate two kinds of latency:
-
-#### Proxy-observed request latency
-
-This is:
-
-- time from forwarding request upstream to receiving response headers/body completion
-
-Measure this in the ingress process first.
-
-This is the best signal for:
-
-- EWMA latency balancing
-- request-level routing decisions
-
-#### Network/socket latency
-
-This is:
-
-- connect latency
-- retransmission behavior
-- RTT-like transport signals
-- socket queuing / kernel timing hints
-
-This is where eBPF can help, but it is not a drop-in replacement for request latency.
-
-### eBPF is a good fit for these cases
-
-- observing TCP connect/close lifecycle per backend pod
-- measuring connection establishment latency
-- counting active sockets per pod/backend
-- capturing kernel-level network health signals
-- building pod-local load hints without modifying the app container
-
-### eBPF is a poor first fit for these cases
-
-- exact HTTP inflight requests
-- exact per-request end-to-end latency in a keepalive-heavy proxy
-- making every routing decision depend on synchronous kernel probing
+This point must be treated as a core architectural requirement, not a nice-to-have.
 
 ---
 
-## 16. Multi-Ingress-Pod eBPF Architecture
+## 6. Sidecar And eBPF Plan
 
-If you run multiple ingress pods, you must decide whether balancing signals are:
+### Goal
 
-- local to each ingress pod
-- or globally shared across all ingress pods
+Build a sidecar that can expose server-local load signals for `HTTP/1.1` workloads without requiring application code changes.
 
-### Recommended model
+The sidecar should provide:
 
-Start with local decision-making and optional global approximation.
+- server-local request RIF
+- recent request latency estimates
+- a probe endpoint the ingress data plane can query
 
-#### Local signals per ingress pod
+### Important principle
 
-Each ingress pod keeps:
+The sidecar should infer request lifecycle, not merely connection lifecycle.
 
-- local request inflight counters
-- local EWMA latency per backend
-- local backend selection state
+The useful events are:
 
-This is fast and simple.
+- request start
+- response completion
 
-It works well because each pod only needs to choose well for the requests it receives.
+From these, you can derive:
 
-#### Optional cluster-wide signal sharing
+- current RIF: increment on request start, decrement on response completion
+- request latency: completion time minus start time
+- recent latency summaries for probing
 
-Add this only later if you need cluster-wide least-connections behavior.
+### What not to do
 
-You can aggregate:
+Do not treat these as sufficient:
 
-- eBPF-derived connection counts
-- proxy-derived request inflight counts
-- proxy-derived latency EWMAs
+- number of `ESTABLISHED` sockets
+- total open file descriptors
+- TCP connection count alone
 
-But the sharing should be:
+Those are at best rough pressure signals, not true request-level signals.
 
-- asynchronous
-- approximate
-- bounded by freshness windows
+### How to do this for `HTTP/1.1`
 
-Do not try to build a strongly consistent global load-balancing state first.
+There are several reasonable approaches. The plan should use them in this order:
 
-That complexity is not worth it at this stage.
+#### Stage A: define the signal model first
 
-### Best deployment shape for eBPF
+Before deep eBPF work, define exactly what the sidecar reports:
 
-For eBPF, the cleanest model is:
+- `rif`: number of active in-flight HTTP requests currently being processed by the backend
+- `latency_median_ms`: median of recent completed request latencies
+- `timestamp_ms`
+- optional:
+  - `sample_count`
+  - `latency_p90_ms`
+  - `signal_age_ms`
 
-- a node-level eBPF agent as a DaemonSet
-- each agent observes socket/network events on its node
-- it exports summarized metrics keyed by:
-  - pod IP
-  - namespace
-  - service/backend identity
-  - timestamp/freshness
+#### Stage B: start with request-aware but simpler instrumentation
 
-Then your ingress pods or controller can consume summarized state, not raw kernel events.
+Use the simplest approach that can infer request begin and end for `HTTP/1.1`.
 
-Why this is better than one sidecar per app pod:
+Possible options:
 
-- eBPF usually needs elevated privileges and kernel access
-- node-level deployment is operationally more realistic
-- one agent can observe many pods on the node
-- you avoid putting privileged logic in every workload pod
+- user-space transparent proxy sidecar
+  - intercept app traffic locally
+  - parse `HTTP/1.1` request boundaries
+  - increment RIF when request headers/body are accepted
+  - decrement when response is fully sent
+- socket-level sidecar with protocol parsing
+  - observe reads/writes for the backend process
+  - reconstruct request/response boundaries for `HTTP/1.1`
 
-### Data flow for the recommended architecture
+This phase is about getting correct request-aware signals, even if it is not yet the final eBPF implementation.
 
-1. Ingress proxy records request inflight and request latency locally.
-2. Node eBPF agent observes socket-level activity and exports connection metrics.
-3. A lightweight collector or shared cache aggregates metrics by backend pod.
-4. Each ingress pod periodically refreshes backend metrics into an in-memory cache.
-5. Selector algorithms use:
-   - proxy-local request inflight as the primary signal
-   - optional eBPF connection/load hints as secondary signals
+#### Stage C: eBPF-based lifecycle inference
 
-### Important rule
+Once the signal model is validated, move to eBPF-assisted collection.
 
-Never make the request path depend on querying eBPF data synchronously.
+Potential eBPF strategy:
 
-Always use cached snapshots with:
+- attach to socket and syscall boundaries relevant to backend traffic
+- correlate events by connection tuple and process identity
+- detect request bytes arriving and response completion progress
+- maintain per-connection parser state for `HTTP/1.1`
+- maintain a sidecar-local in-flight request counter
+- record per-request completion durations into a sliding window
 
-- timeout bounds
-- freshness TTLs
-- safe fallback to simpler algorithms
+The sidecar then serves `/probe` by returning:
+
+- current request-level RIF
+- recent latency estimate
+
+### Practical constraints
+
+You should explicitly account for:
+
+- kernel version compatibility
+- required capabilities and security posture
+- per-connection parser complexity
+- chunked responses and persistent connections
+- large bodies and streaming behavior
+- correctness under retries and client disconnects
+
+### Recommended first implementation rule
+
+For the first useful version:
+
+- support only non-upgraded `HTTP/1.1`
+- support keep-alive
+- do not promise correctness for `HTTP/2`, WebSockets, or gRPC
 
 ---
 
-## 17. What To Learn For The eBPF Path
+## 7. Corrected Implementation Roadmap
 
-If you want this to be a learning track, do it in this order.
+### Phase 1: Make the ingress core correct
 
-### Stage 1: Networking and Linux basics
+Build the minimum standards-aware ingress controller core:
 
-Learn:
+- correct ingress-class handling
+- legacy ingress annotation support
+- path matching that follows Kubernetes semantics
+- exact and prefix precedence tests
+- deterministic route update and deletion behavior
+- robust endpoint resolution from `EndpointSlice`
+- coherent route/backend publication model
+- maintain and expand controller, router, and proxy tests
 
-- TCP lifecycle
-- listen, accept, connect, close
-- keepalive
-- HTTP/1.1 vs HTTP/2 multiplexing
-- socket states and why connection count is only an approximation
+Deliverable:
 
-Implement:
+- a controller that behaves correctly for standard `HTTP/1.1` ingress routing
 
-- document exactly what signal you want to collect
-- define metric schemas for:
-  - inflight requests
-  - active TCP connections
-  - connect latency
-  - EWMA request latency
+### Phase 2: Harden the data plane and algorithm interface
 
-### Stage 2: Proxy-native instrumentation first
+Strengthen the proxy and balancing interfaces:
 
-Learn:
+- keep round robin as the baseline
+- add explicit policy selection from ingress annotations
+- separate route metadata from backend metadata
+- add better debug and metrics coverage
+- add request-level per-backend accounting inside the proxy
 
-- middleware timing
-- atomic counters
-- histogram and EWMA calculation
+Deliverable:
 
-Implement:
+- a clean baseline ingress data plane with pluggable selectors
 
-- per-backend inflight request counters in the ingress proxy
-- per-backend request latency measurement
-- EWMA latency update logic
-- tests proving counters increment/decrement correctly on success and failure
+### Phase 3: Add passive request-level signals in the data plane
 
-Why this comes first:
+Before active probing, validate the core signals in the proxy:
 
-- this gives you a correct baseline before eBPF
+- per-backend in-flight request counters
+- per-backend completed request latency tracking
+- latency summaries from recent request windows
+- least-connections or RIF-only selector as a validation step
 
-### Stage 3: eBPF fundamentals
+Important note:
 
-Learn:
+- this is not yet full Prequal
+- it is a signal-validation phase
 
-- BPF maps
-- kprobes
-- tracepoints
-- perf/ring buffers
-- verifier constraints
-- CO-RE
-- user space loader pattern
+Deliverable:
 
-Implement:
+- proof that RIF-aware and latency-aware selection behaves sensibly in your ingress proxy
 
-- a minimal eBPF program that tracks TCP connect/close events
-- user space code that reads events and maintains:
-  - active connections per pod/backend IP
-  - connect latency samples if available from chosen hooks
+### Phase 4: Implement Prequal core mechanics
 
-### Stage 4: Kubernetes identity mapping
+Build the actual Prequal-inspired mechanism:
 
-Learn:
+- bounded probe pool
+- async probing
+- pool occupancy fallback to random when too small
+- RIF-conditioned latency estimation
+- HCL selection rule
+- probe reuse and removal logic
+- request-side RIF increment on selected probe entries
+- each proxy instance maintains its own independent probe pool
+- no shared probe state or centralized balancing coordinator
 
-- mapping IPs to pods
-- CNI/network namespace implications
-- node-local visibility
+Important discipline:
 
-Implement:
+- do not replace HCL with a linear combination
+- keep this aligned with the paper unless you intentionally document a deviation
 
-- a node agent that enriches socket events with pod metadata
-- stable keys such as:
-  - namespace/pod
-  - service key
-  - endpoint key
+Deliverable:
 
-### Stage 5: Aggregate and consume metrics safely
+- a Kubernetes-oriented Prequal adaptation using proxy-local signals first, not just a generic "smart" selector
 
-Learn:
+### Phase 5: Build the request-aware sidecar for `HTTP/1.1`
 
-- pull vs push metrics
-- staleness handling
-- cache invalidation
+Implement the deployability layer:
 
-Implement:
+- sidecar reports request-level RIF and latency estimates
+- start with the simplest request-aware implementation that works
+- validate sidecar signals against proxy-observed truth
+- document error bounds and unsupported protocols
 
-- a small in-memory metrics cache in the ingress
-- freshness TTL
-- fallback behavior when metrics are missing
-- metrics snapshot format for debugging
+Deliverable:
 
-### Stage 6: Algorithm experiments
+- no-application-change signal collection for `HTTP/1.1` backends
 
-Learn:
+### Phase 6: Integrate sidecar-fed probing
 
-- combining strong and weak signals
-- noisy metric smoothing
-- bias and oscillation in adaptive balancing
+Use the sidecar as the source of server-local signals:
 
-Implement:
+- async probes target the sidecar endpoint
+- proxy consumes reported RIF and latency values
+- compare passive local signals vs sidecar-fed server-local signals
+- measure whether server-local signals improve tail latency under uneven load
+- keep proxies independent even when probing the same backend set
 
-- least-connections using proxy inflight counts
-- latency-aware selection using proxy EWMA
-- hybrid selector that uses eBPF connection counts only as a tie-breaker or penalty term
+Deliverable:
+
+- Prequal-style probing without application source-code changes
+
+### Phase 7: Ingress-controller completeness and validation
+
+Move toward a serious ingress-controller implementation:
+
+- `IngressClass` support
+- ingress status handling
+- better deployment manifests
+- high-churn reconciliation tests
+- route-scale tests
+- end-to-end cluster tests
+- load tests comparing:
+  - round robin
+  - least-connections
+  - passive RIF-aware selection
+  - Prequal HCL
+
+Primary evaluation metric:
+
+- tail latency improvement under uneven and antagonistic load
+
+Secondary metrics:
+
+- error rate
+- reconciliation latency
+- request throughput
+- backend fairness
+- operational complexity
 
 ---
 
-## 18. Concrete Implementation Plan For eBPF Integration
+## 8. Success Criteria
 
-Follow this exact order.
+The project should be considered successful in stages.
 
-### Step 1: Add correct request-level metrics in the ingress
+### Success level 1: ingress core
 
-Implement:
+- routes correctly according to Kubernetes ingress semantics
+- handles endpoint updates correctly
+- passes unit and end-to-end routing tests
 
-- `inflight_requests{backend}`
-- `request_duration_seconds{backend}`
-- backend-local EWMA latency state
+### Success level 2: signal correctness
 
-Do not start with eBPF before this exists.
+- request-level RIF can be measured accurately for `HTTP/1.1`
+- recent latency estimates correlate with observed backend behavior
+- sidecar signals are validated against a trusted baseline
 
-### Step 2: Build least-connections and EWMA selectors without eBPF
+### Success level 3: Prequal adaptation
 
-Implement:
+- bounded probe pool and HCL are implemented
+- sidecar-fed server-local signals work without app changes
+- experiments show better tail behavior than round robin in adversarial conditions
 
-- least-connections from proxy inflight counters
-- EWMA latency selector from proxy-observed durations
+### Success level 4: ingress-controller maturity
 
-This proves your balancing framework.
+- standards-aware ingress behavior
+- stable observability
+- deployable manifests
+- credible operator story
 
-### Step 3: Prototype eBPF as a separate node agent
+---
 
-Implement:
+## 9. Final Guidance
 
-- node DaemonSet
-- eBPF program for socket lifecycle events
-- user space exporter
-- debug output only at first
+The project is strongest when described this way:
 
-Success criteria:
+- a real custom ingress controller as the end goal
+- `HTTP/1.1` first
+- Prequal-inspired backend selection as the advanced policy layer
+- sidecar plus eBPF as the deployability mechanism for request-level signals without changing app code
 
-- you can print active connection counts per backend pod reliably
+The biggest mistake to avoid is jumping straight to advanced algorithm work before:
 
-### Step 4: Add a metrics API between eBPF agent and ingress
+- ingress correctness is fixed
+- request-level signal collection is well-defined
+- the sidecar proves request lifecycle inference rather than connection counting
 
-Implement one of:
+The right order is:
 
-- Prometheus scrape path
-- node-local HTTP endpoint
-- gRPC stream if you need lower latency later
-
-Recommended first choice:
-
-- Prometheus-style or simple HTTP JSON endpoint
-
-Keep it simple.
-
-### Step 5: Ingest eBPF metrics into the ingress as optional hints
-
-Implement:
-
-- periodic background refresh
-- cache by backend endpoint key
-- freshness TTL
-- selector fallback when metrics are stale
-
-### Step 6: Compare algorithm quality
-
-Test:
-
-- round robin
-- least-connections using proxy inflight
-- EWMA using proxy latency
-- hybrid EWMA + eBPF connection penalty
-
-Measure:
-
-- throughput
-- p95/p99 latency
-- fairness across backends
-- recovery under pod churn
-
-### Step 7: Decide if eBPF adds enough value
-
-Possible outcomes:
-
-- eBPF materially improves decisions under some workloads
-- eBPF is useful only for observability, not balancing
-- eBPF is not worth the operational complexity yet
-
-All three are valid outcomes.
-
-The learning still pays off.
-
-That path will maximize both learning value and engineering quality.
+1. ingress correctness
+2. clean selector architecture
+3. request-aware signal validation
+4. full Prequal mechanics using proxy-local signals first
+5. sidecar request lifecycle inference
+6. sidecar-fed Prequal signal integration

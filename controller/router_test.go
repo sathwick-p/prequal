@@ -54,9 +54,9 @@ func TestRouter_BasicPrefixMatching(t *testing.T) {
 		{"one level deeper", "/api/foo", "svc-api", true},
 		{"multi level deeper", "/api/v2/bar", "svc-api", true},
 		{"unrelated path", "/other", "", false},
-		// The radix tree matches on byte prefixes, not path-segment boundaries.
-		// "/api" is a byte-prefix of "/apiv2", so the router matches it.
-		{"partial segment shares byte prefix", "/apiv2", "svc-api", true},
+		// The segment trie matches on path segments, not byte prefixes.
+		// "/api" does NOT match "/apiv2" because "apiv2" != "api".
+		{"partial segment does not share path prefix", "/apiv2", "", false},
 	}
 
 	r := NewRouter()
@@ -141,10 +141,9 @@ func TestRouter_ExactMatchVsPrefix(t *testing.T) {
 	// Exact "/health" matches only "/health".
 	// Prefix "/" matches "/", "/other", etc.
 	//
-	// NOTE: The router performs a single LongestPrefix lookup with no fallback.
-	// For "/health/check" the radix tree returns "/health" (longer than "/"),
-	// but that route is Exact and does not equal "/health/check", so Match
-	// returns nil. The prefix "/" route is NOT tried as a fallback.
+	// The segment trie walks path segments and tracks the deepest Prefix match.
+	// For "/health/check", the trie walks to the "health" node (Exact, not Prefix),
+	// then can't find "check" child, so it falls back to the deepest Prefix: "/".
 	cases := []struct {
 		name      string
 		reqPath   string
@@ -152,8 +151,8 @@ func TestRouter_ExactMatchVsPrefix(t *testing.T) {
 		wantKey   string
 	}{
 		{"exact path matched by exact route", "/health", true, "svc-health-exact"},
-		// LongestPrefix for "/health/check" resolves to Exact "/health" → nil (no segment-fallback).
-		{"sub-path of exact route returns nil", "/health/check", false, ""},
+		// "/health/check" falls back to Prefix "/" because Exact "/health" only matches "/health" exactly.
+		{"sub-path of exact route falls back to prefix", "/health/check", true, "svc-root"},
 		{"root matched by prefix route", "/", true, "svc-root"},
 		{"other path matched by prefix route", "/other", true, "svc-root"},
 	}
