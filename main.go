@@ -7,8 +7,9 @@ import (
 	"os"
 	signal "os/signal"
 	"prequal/controller"
-	"prequal/loadbalancer/roundrobin"
+	"prequal/loadbalancer"
 	"prequal/server"
+
 	"syscall"
 	"time"
 
@@ -68,8 +69,9 @@ func main() {
 		},
 	)
 	ctrl := controller.NewController(factory, store, queue)
-	selector := &roundrobin.RoundRobin{}
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selector)
+	tracker := &loadbalancer.RIFTracker{}
+	selector := &loadbalancer.LeastConnections{Tracker: tracker}
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selector, tracker)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"prequal/controller"
+	"prequal/loadbalancer"
 	"prequal/loadbalancer/roundrobin"
 	"prequal/server"
 )
@@ -30,7 +31,8 @@ func backendEndpoint(t *testing.T, ts *httptest.Server) *controller.Endpoint {
 
 func newProxy(router *controller.Router, store *controller.BackendIPStore) *server.ProxyServer {
 	rr := &roundrobin.RoundRobin{}
-	return server.NewProxyServer(router, store, rr)
+	tracker := &loadbalancer.RIFTracker{}
+	return server.NewProxyServer(router, store, rr, tracker)
 }
 
 // Test 1: Request forwarded to matched backend

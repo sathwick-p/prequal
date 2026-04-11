@@ -30,9 +30,10 @@ type ProxyServer struct {
 	ips       *controller.BackendIPStore
 	Transport *http.Transport
 	selector  loadbalancer.Selector
+	tracker   *loadbalancer.RIFTracker
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector, tracker *loadbalancer.RIFTracker) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -42,6 +43,7 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, s
 			IdleConnTimeout:     90 * time.Second,
 		},
 		selector: selector,
+		tracker:  tracker ,
 	}
 }
 
@@ -77,7 +79,6 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Select backend (simple: first one for now)
 	backend, err := p.selector.Select(backends)
 	if err != nil {
 		observability.RecordNoBackends()
@@ -102,6 +103,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		observability.RecordRequest(host, path, observability.StatusCode(http.StatusInternalServerError), time.Since(start), backend.String())
 		return
 	}
+	backendAddr := backend.Addr()
+	p.tracker.Increase(backendAddr)
+	defer p.tracker.Decrease(backendAddr)
 
 	// Creating Reverse proxy
 
