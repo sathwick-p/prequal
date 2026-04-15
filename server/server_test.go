@@ -33,7 +33,13 @@ func backendEndpoint(t *testing.T, ts *httptest.Server) *controller.Endpoint {
 func newProxy(router *controller.Router, store *controller.BackendIPStore) *server.ProxyServer {
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
-	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
+	probePool := pool.NewProbePool(pool.PoolConfig{
+		MaxSize:     16,
+		MaxAge:      1 * time.Second,
+		ReuseLimit:  3,
+		QRIF:        0.75,
+		MaxProbeAge: 2 * time.Second,
+	})
 	selectors := map[string]loadbalancer.Selector{}
 	return server.NewProxyServer(router, store, selectors, tracker, latencyTracker, probePool, nil)
 }

@@ -16,9 +16,9 @@ func (lc *LeastConnections) Select(endpoints []*controller.Endpoint) (*controlle
 	}
 	if len(endpoints) > 1 {
 		bestEndpoint := endpoints[0]
-		bestRIF := lc.Tracker.Get(bestEndpoint.Addr())
+		bestRIF := lc.Tracker.Get(bestEndpoint.String())
 		for i := 1; i < len(endpoints); i++ {
-			rif := lc.Tracker.Get(endpoints[i].Addr())
+			rif := lc.Tracker.Get(endpoints[i].String())
 			if rif < bestRIF {
 				bestEndpoint = endpoints[i]
 				bestRIF = rif

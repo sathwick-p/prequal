@@ -11,11 +11,13 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
+const NUM_BUCKETS: usize = 5;
+
 struct AppState {
     rif: AtomicI64,
-    latencies: Mutex<VecDeque<f64>>,
+    latency_buckets: Vec<Mutex<VecDeque<f64>>>,
     work_multiplier: f64,
-    max_latency_samples: usize,
+    max_samples_per_bucket: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -41,6 +43,16 @@ struct ProbeResponse {
     timestamp_ms: u64,
 }
 
+fn rif_bucket(rif: i64) -> usize {
+    match rif {
+        0 => 0,
+        1 => 1,
+        2..=3 => 2,
+        4..=7 => 3,
+        _ => 4,
+    }
+}
+
 fn compute_median(latencies: &VecDeque<f64>) -> f64 {
     if latencies.is_empty() {
         return 0.0;
@@ -59,7 +71,7 @@ async fn work_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<WorkRequest>,
 ) -> Json<WorkResponse> {
-    state.rif.fetch_add(1, Ordering::Relaxed);
+    let arrival_rif = state.rif.fetch_add(1, Ordering::Relaxed);
     let start = Instant::now();
 
     let iterations =
@@ -75,11 +87,12 @@ async fn work_handler(
     let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     {
-        let mut latencies = state.latencies.lock().await;
-        if latencies.len() >= state.max_latency_samples {
-            latencies.pop_front();
+        let bucket_idx = rif_bucket(arrival_rif);
+        let mut bucket = state.latency_buckets[bucket_idx].lock().await;
+        if bucket.len() >= state.max_samples_per_bucket {
+            bucket.pop_front();
         }
-        latencies.push_back(duration_ms);
+        bucket.push_back(duration_ms);
     }
 
     state.rif.fetch_sub(1, Ordering::Relaxed);
@@ -95,8 +108,31 @@ async fn health_handler() -> Json<HealthResponse> {
 
 async fn probe_handler(State(state): State<Arc<AppState>>) -> Json<ProbeResponse> {
     let rif = state.rif.load(Ordering::Relaxed);
-    let latencies = state.latencies.lock().await;
-    let median = compute_median(&latencies);
+    let target_bucket = rif_bucket(rif);
+
+    // Try the exact bucket first, then search outward for nearest non-empty bucket.
+    // Candidates are ordered: target, target-1, target+1, target-2, target+2, ...
+    let mut median = 0.0_f64;
+    let candidates: Vec<usize> = {
+        let mut v = vec![target_bucket];
+        for d in 1..NUM_BUCKETS {
+            if target_bucket >= d {
+                v.push(target_bucket - d);
+            }
+            if target_bucket + d < NUM_BUCKETS {
+                v.push(target_bucket + d);
+            }
+        }
+        v
+    };
+    'outer: for idx in candidates {
+        let bucket = state.latency_buckets[idx].lock().await;
+        if !bucket.is_empty() {
+            median = compute_median(&bucket);
+            break 'outer;
+        }
+    }
+
     let timestamp_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -121,11 +157,15 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1.0);
 
+    let latency_buckets = (0..NUM_BUCKETS)
+        .map(|_| Mutex::new(VecDeque::new()))
+        .collect();
+
     let state = Arc::new(AppState {
         rif: AtomicI64::new(0),
-        latencies: Mutex::new(VecDeque::new()),
+        latency_buckets,
         work_multiplier,
-        max_latency_samples: 64,
+        max_samples_per_bucket: 32,
     });
 
     let app = Router::new()

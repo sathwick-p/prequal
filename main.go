@@ -73,7 +73,14 @@ func main() {
 	ctrl := controller.NewController(factory, store, queue)
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
-	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
+	cfg := loadbalancer.DefaultProbeConfig()
+	probePool := pool.NewProbePool(pool.PoolConfig{
+		MaxSize:     cfg.PoolMaxSize,
+		MaxAge:      cfg.PoolMaxAge,
+		ReuseLimit:  cfg.PoolReuseLimit,
+		QRIF:        cfg.QRIF,
+		MaxProbeAge: cfg.MaxProbeAge,
+	})
 
 	// Pluggable selectors keyed by ingress annotation value
 	selectors := map[string]loadbalancer.Selector{
@@ -83,7 +90,7 @@ func main() {
 
 	stop := make(chan struct{})
 
-	prober := loadbalancer.NewProber(probePool, store, 8080, 100*time.Millisecond, 1.0, stop)
+	prober := loadbalancer.NewProber(probePool, store, cfg, stop)
 	go prober.Run()
 
 	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool, prober)

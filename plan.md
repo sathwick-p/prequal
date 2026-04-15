@@ -76,6 +76,14 @@ The most important conclusion is:
 - route-level algorithm selection exists
 - tests and metrics exist across controller, router, and proxy
 
+### What was recently added
+
+- async probing (`loadbalancer/prober.go`) wired into request path and background loop
+- Rust backend (`backend/`) with `/prequal/probe` returning server-local RIF and latency
+- the `prequal` path uses both virtual probes (from completed requests) and real backend probes (async)
+- probe freshness checked via backend-reported timestamps
+- prober rejects non-200 probe responses
+
 ### What is still incomplete or incorrect
 
 - routing state and backend state are published as separate mutable structures
@@ -84,12 +92,11 @@ The most important conclusion is:
   - no ingress status updates
   - no TLS support
   - no production-oriented service exposure model
-- the `prequal` path is still based on proxy-local signals plus local random pool seeding
-- there is still no async probing loop to backend services
-- there is still no backend-native probe endpoint integration
-- there is no server-local signal source in the current request path
-- there is no RIF-conditioned latency estimation matching the paper
-- there are no configurable probe rates and removal policies matching the paper
+- no RIF-conditioned latency estimation matching the paper
+- no configurable probe rates and removal policies matching the paper
+- no explicit stale-probe ingest policy beyond timestamp-based pool cleanup
+- no test coverage for the probing path (probe generation, response parsing, freshness handling, failure behavior)
+- no probing observability metrics (probe success/fail counts, pool occupancy)
 
 ---
 
@@ -295,6 +302,26 @@ Even after backend probing is added, there are still paper-level details that ne
 - reuse budget behavior matching the paper more closely
 - clear handling of stale observations
 
+### 5.7 Missing probing-path test coverage
+
+The probing path is now part of the core architecture, not an optional experiment.
+
+That means correctness no longer depends only on:
+
+- route matching
+- endpoint discovery
+- proxy forwarding
+
+It also depends on:
+
+- probe request generation
+- probe response parsing
+- probe freshness handling
+- probe ingestion into the pool
+- selection behavior when probes are missing, stale, or failing
+
+This area needs direct unit and integration tests.
+
 ---
 
 ## 6. Backend Probe Endpoint Plan
@@ -353,6 +380,39 @@ Each backend should:
 - expose recent latency summary
 - return probe data quickly and cheaply
 
+### Latency estimation roadmap
+
+The current backend returns a single rolling median latency.
+
+That is a reasonable first step, but it is not yet faithful to the paper.
+
+The paper's idea is:
+
+- latency should be estimated at or near the backend's current `RIF`
+- not as one unconditional median across all recent traffic
+
+Why:
+
+- latency is load-dependent
+- a backend may be fast at low `RIF` and much slower at high `RIF`
+- one global median can hide the actual response-time curve under load
+
+Recommended next implementation:
+
+- bucket completed-request latencies by `RIF` at request arrival
+- examples:
+  - `0`
+  - `1`
+  - `2-3`
+  - `4-7`
+  - `8+`
+- on probe:
+  - read current `RIF`
+  - choose the nearest relevant bucket
+  - return the median from that bucket
+
+This gives you a practical approximation of RIF-conditioned latency without requiring a complex model.
+
 ### Proxy responsibilities
 
 The ingress proxy should:
@@ -362,6 +422,48 @@ The ingress proxy should:
 - store probe responses in the local probe pool
 - use those responses for HCL selection
 - fall back safely when probes are missing or stale
+
+### Probe freshness policy
+
+Probe freshness is now an explicit architectural concern.
+
+The system should define:
+
+- maximum acceptable probe age at ingest
+- maximum acceptable probe age at selection time
+- fallback behavior when too many probes are stale
+- handling for suspicious or skewed backend timestamps
+
+Recommended policy:
+
+- if a probe response timestamp is older than the allowed threshold relative to local proxy time, discard it on ingest
+- if cleanup leaves the pool below a safe occupancy threshold, fall back to a simpler selection path
+- export metrics for stale probe drops and stale pool occupancy
+
+This keeps the proxy from selecting backends based on obsolete load data.
+
+### Probe rate and removal policy
+
+The current system has the basic mechanics, but the rates are still effectively fixed.
+
+These should become explicit configuration values:
+
+- probes per request
+- background idle probe interval
+- pool max age
+- pool max size
+- reuse budget
+- remove-worst rate
+- QRIF threshold
+
+Why this matters:
+
+- too few probes causes stale decisions
+- too many probes adds overhead
+- too little removal keeps biased or stale entries
+- too much removal empties the pool too often
+
+The goal is to make these tunable so experiments can be run without code changes.
 
 ### Transitional strategy
 
@@ -376,69 +478,44 @@ Once backend probes exist:
 - populate the pool primarily from backend probe responses
 - keep local request observations only as optional supplementary signal
 
+Recommended direction from here:
+
+- backend probe responses should gradually become the authoritative source for the `prequal` path
+- local request observations should remain a fallback or supplementary freshness aid, not the primary source forever
+
 ---
 
 ## 7. Detailed Next Steps
 
 This is the concrete work that should happen next.
 
-### Step 1: Update the plan and remove sidecar direction
+### Step 1: Update the plan and remove sidecar direction (DONE)
 
-Done conceptually, but this should remain consistent across the repo.
+- sidecar/eBPF removed as intended architecture direction
+- backend-native probe endpoints adopted instead
+- `probe/probe.go` remains as deprecated experiment
 
-Actions:
+### Step 2: Define the backend probe API (DONE)
 
-- remove sidecar/eBPF as the intended architecture direction
-- treat `probe/probe.go` as deprecated experiment or remove it later
-- align comments and docs with backend-native probe endpoints
+- probe path: `/prequal/probe`
+- JSON schema: `{"rif": int, "latency_median_ms": float, "timestamp_ms": uint}`
+- probe endpoint lives in the backend service directly
 
-### Step 2: Define the backend probe API
+### Step 3: Implement a minimal backend probe service (DONE)
 
-Before implementing probing logic, define the interface.
+- Rust backend in `backend/` with axum
+- tracks in-flight requests via AtomicI64
+- tracks recent latencies via circular buffer with median
+- exposes `/prequal/probe`, `/work`, `/health`
+- `WORK_MULTIPLIER` env var for simulating heterogeneous hardware
 
-Actions:
+### Step 4: Add async probe collection in the proxy (DONE)
 
-- choose probe path, for example `/prequal/probe`
-- define JSON schema
-- define timeout expectations
-- define meaning of each field
-- decide whether probe endpoint lives in the backend service directly or a tiny co-deployed helper process
-
-Deliverable:
-
-- written probe contract with example request/response
-
-### Step 3: Implement a minimal backend probe service
-
-Build a small backend implementation that exposes real server-local signals.
-
-Actions:
-
-- track in-flight requests
-- track recent latencies
-- expose probe endpoint
-- add tests for probe responses
-
-Deliverable:
-
-- one backend that can be probed by the ingress proxy
-
-### Step 4: Add async probe collection in the proxy
-
-This is the biggest technical next step.
-
-Actions:
-
-- add background probe goroutines
-- select backend targets uniformly at random
-- call probe endpoints with short timeouts
-- parse probe responses
-- feed them into the pool
-- keep probe logic isolated from request forwarding logic
-
-Deliverable:
-
-- live backend probe responses entering the pool
+- `loadbalancer/prober.go` with `TriggerProbes` (per-request) and `Run` (background loop)
+- probes random backends uniformly
+- rejects non-200 responses
+- uses backend-reported timestamps for freshness
+- wired into `server.go` and `main.go`
 
 ### Step 5: Make pool population probe-driven
 
@@ -455,7 +532,56 @@ Deliverable:
 
 - pool population mainly reflects backend-reported state
 
-### Step 6: Improve algorithm tests
+### Step 6: Add an explicit stale-probe policy
+
+Do not leave freshness as an implicit byproduct of timestamps and cleanup alone.
+
+Actions:
+
+- define max accepted probe age on ingest
+- define max accepted probe age during selection
+- reject backend probe responses with clearly stale timestamps
+- define fallback behavior when the fresh pool is too small
+- export metrics for stale probe drops
+
+Deliverable:
+
+- a documented and testable freshness policy
+
+### Step 7: Make probe/removal behavior configurable
+
+Move fixed algorithm constants into config.
+
+Actions:
+
+- make probes-per-request configurable
+- make background probe interval configurable
+- make pool max age configurable
+- make QRIF configurable
+- make reuse limit configurable
+- make remove-worst cadence or rate configurable
+
+Deliverable:
+
+- the probing path can be tuned experimentally without code edits
+
+### Step 8: Implement RIF-conditioned latency estimation
+
+Move the backend closer to the paper's latency model.
+
+Actions:
+
+- record request latency together with the RIF level at request arrival
+- choose a practical bucketing scheme for RIF
+- compute medians per bucket
+- update the backend probe endpoint to return latency estimated for current RIF
+- document the approximation clearly
+
+Deliverable:
+
+- backend-reported latency reflects current load more faithfully than a global rolling median
+
+### Step 9: Improve algorithm and probing tests
 
 Current tests are useful, but the algorithm layer needs more specific coverage.
 
@@ -467,12 +593,17 @@ Add tests for:
 - HCL behavior on synthetic pool states
 - stale probe handling
 - empty/low-occupancy pool fallback
+- successful backend probe ingestion
+- non-200 probe responses
+- malformed probe JSON
+- timestamp handling
+- background probing shutdown behavior
 
 Deliverable:
 
 - algorithm-specific confidence, not just proxy smoke tests
 
-### Step 7: Improve state modeling
+### Step 10: Improve state modeling
 
 The current controller shape works, but probe integration will add complexity.
 
@@ -486,7 +617,7 @@ Deliverable:
 
 - clearer ownership between reconciliation, routing, and balancing state
 
-### Step 8: Add observability for probing
+### Step 11: Add observability for probing
 
 Probing is hard to reason about without visibility.
 
@@ -504,7 +635,7 @@ Deliverable:
 
 - enough visibility to debug probe behavior under load
 
-### Step 9: Improve ingress-controller completeness
+### Step 12: Improve ingress-controller completeness
 
 Keep the product direction moving, not just the algorithm.
 
@@ -519,7 +650,7 @@ Deliverable:
 
 - progress toward a real ingress controller, not just a research proxy
 
-### Step 10: Evaluate algorithm behavior under load
+### Step 13: Evaluate algorithm behavior under load
 
 Eventually you need evidence, not only design.
 
@@ -552,8 +683,10 @@ If you want the most sensible order from here, do this:
 2. Implement a minimal backend probe endpoint.
 3. Add async probe collection in the proxy.
 4. Feed backend probe responses into the pool.
-5. Add tests and metrics around probing.
-6. Then iterate on paper fidelity details.
+5. Add an explicit stale-probe policy.
+6. Add tests and metrics around probing.
+7. Make probe/removal behavior configurable.
+8. Then iterate on RIF-conditioned latency and paper fidelity details.
 
 In parallel, continue ingress-controller completeness work, but do not block the probing architecture on full controller maturity.
 
