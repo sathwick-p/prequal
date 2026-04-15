@@ -159,12 +159,17 @@ func (c *Controller) onIngressUpdate(oldObj, newObj interface{}) {
 	log.Printf("[DEBUG] Added to queue: %s", key)
 }
 func (c *Controller) isIngressPrequal(ingress *networkingv1.Ingress) bool {
+	// 1. Standard: spec.ingressClassName (preferred, Kubernetes 1.18+)
 	if ingress.Spec.IngressClassName != nil && *ingress.Spec.IngressClassName == "prequal" {
 		return true
-	} else {
-		if ingress.Labels["ingress.class"] != "" && ingress.Labels["ingress.class"] == "prequal" {
-			return true
-		}
+	}
+	// 2. Legacy annotation: kubernetes.io/ingress.class (widely used in older manifests)
+	if v, ok := ingress.Annotations["kubernetes.io/ingress.class"]; ok && v == "prequal" {
+		return true
+	}
+	// 3. Non-standard label fallback (for backward compatibility with existing test manifests)
+	if ingress.Labels["ingress.class"] == "prequal" {
+		return true
 	}
 	return false
 }

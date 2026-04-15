@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -30,12 +31,13 @@ type ProxyServer struct {
 	router         *controller.Router
 	ips            *controller.BackendIPStore
 	Transport      *http.Transport
+	selectors      map[string]loadbalancer.Selector
 	tracker        *loadbalancer.RIFTracker
 	latencyTracker *loadbalancer.LatencyTracker
 	pool           *pool.ProbePool
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -44,9 +46,63 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, t
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 		},
+		selectors:      selectors,
 		tracker:        tracker,
 		latencyTracker: latencyTracker,
 		pool:           pool,
+	}
+}
+
+// selectBackend dispatches to the appropriate algorithm based on the annotation.
+// "prequal" or "" (default) uses the probe pool with HCL.
+// Other values (e.g., "round-robin", "least-connections") use the pluggable selector.
+func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint) (*controller.Endpoint, error) {
+	switch algo {
+	case "prequal", "":
+		// Seed pool with random probes from the full backend list to avoid selection bias.
+		// The paper samples uniformly at random — we add 1-2 random entries per request.
+		p.seedPool(backends)
+
+		entry, err := p.pool.Select(backends)
+		if err != nil {
+			return nil, err
+		}
+		backendAddr := entry.Backend
+		p.pool.IncrementRIF(backendAddr)
+		return entry.Endpoint, nil
+	default:
+		sel, exists := p.selectors[algo]
+		if !exists {
+			// Unknown algorithm — fall back to prequal
+			log.Printf("[PROXY] Unknown algorithm %q, falling back to prequal", algo)
+			return p.selectBackend("prequal", backends)
+		}
+		return sel.Select(backends)
+	}
+}
+
+// seedPool adds random probes from the full backend list into the pool.
+// This prevents the pool from only containing backends that were already selected
+// (the virtual probe feedback loop problem).
+func (p *ProxyServer) seedPool(backends []*controller.Endpoint) {
+	if len(backends) == 0 {
+		return
+	}
+	// Add 1-2 random backend observations to the pool per request
+	numSeeds := 1
+	if len(backends) > 4 {
+		numSeeds = 2
+	}
+	for range numSeeds {
+		ep := backends[rand.Intn(len(backends))]
+		addr := ep.String()
+		p.pool.Add(&pool.ProbeEntry{
+			Backend:   addr,
+			Endpoint:  ep,
+			RIF:       p.tracker.Get(addr),
+			Latency:   p.latencyTracker.Median(addr),
+			Timestamp: time.Now(),
+		})
 	}
 }
 
@@ -81,8 +137,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Select backend via probe pool (HCL) with fallback to random
-	entry, err := p.pool.Select(backends)
+	// Select backend using the algorithm specified in the ingress annotation
+	backend, err := p.selectBackend(pathConfig.Algorithm, backends)
 	if err != nil {
 		observability.RecordNoBackends()
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
@@ -90,12 +146,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backend := entry.Endpoint
 	backendAddr := backend.String()
 	observability.RecordBackendSelection(backendAddr, pathConfig.Algorithm)
 
-	// Increment RIF in both the pool entry and the tracker
-	p.pool.IncrementRIF(backendAddr)
 	p.tracker.Increase(backendAddr)
 	defer p.tracker.Decrease(backendAddr)
 
@@ -134,7 +187,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Record latency
 	p.latencyTracker.Record(backendAddr, proxyDuration)
 
-	// Feed virtual probe back into the pool
+	// Feed virtual probe back into the pool (for prequal algorithm)
 	p.pool.Add(&pool.ProbeEntry{
 		Backend:   backendAddr,
 		Endpoint:  backend,

@@ -1,13 +1,13 @@
-# Prequal: Corrected Architecture Review and Implementation Plan
+# Prequal: Updated Architecture Review and Detailed Implementation Plan
 
 ## 1. Executive Summary
 
-This project is moving in a good direction, but the right framing is:
+This project is moving in a good direction, but the right framing is now:
 
 - build a standards-aware custom Kubernetes ingress controller first
 - make the data plane support pluggable backend-selection algorithms
 - implement a Kubernetes-friendly adaptation of the Prequal paper on top of that core
-- use a sidecar plus eBPF to avoid application source-code changes
+- use backend-exposed probe endpoints for server-local signals
 - scope the first serious implementation to `HTTP/1.1` backends
 
 That is a valid and ambitious systems project.
@@ -17,7 +17,7 @@ The architecture is sound as a foundation:
 - control plane watches Kubernetes objects and reconciles desired routing state
 - data plane matches requests and proxies them to selected backends
 - backend selection can evolve from round robin to RIF-aware and then Prequal-style selection
-- sidecar instrumentation can upgrade signal quality without requiring application changes
+- backend probe endpoints can upgrade signal quality from proxy-local approximation to server-local measurements
 
 The current repository is no longer just a toy prototype:
 
@@ -26,7 +26,7 @@ The current repository is no longer just a toy prototype:
 - it maintains backend endpoint state
 - it proxies live traffic to discovered backends
 - it already has a selector abstraction
-- it already has round-robin selection
+- it already supports multiple algorithm paths
 - it already has basic Prometheus metrics
 - it already has unit and integration-style tests
 
@@ -37,7 +37,7 @@ The most important conclusion is:
 - the project idea is good
 - the architecture is valid
 - the end goal is realistic
-- the next priority is ingress correctness and protocol-correct signal collection, not advanced balancing heuristics
+- the next priority is moving from proxy-local approximation toward real backend probing while continuing to improve ingress-controller completeness
 
 ---
 
@@ -45,42 +45,51 @@ The most important conclusion is:
 
 ### What exists today
 
-- `main.go` wires informers, queue, controller, proxy server, and debug server
+- `main.go` wires informers, queue, controller, proxy server, selectors, trackers, and debug server
 - `controller/controller.go` reconciles `Ingress` and `EndpointSlice` into:
   - router state
   - backend endpoint state
   - service-to-ingress mappings for resyncs
-- `controller/router.go` performs host and path matching using a radix tree
+- `controller/router.go` performs host and path matching using a segment-aware trie in `tree/tree.go`
 - `loadbalancer/selector.go` defines a selector interface
 - `loadbalancer/roundrobin/rr.go` implements round-robin backend selection
-- `server/server.go` proxies requests using the selected backend
-- `observability/metrics.go` exports basic Prometheus metrics
-- `probe/probe.go` provides an early sidecar-style observer
-- controller and proxy tests already exist
+- `loadbalancer/leastconn.go` implements least-connections backend selection using RIF
+- `loadbalancer/rif.go` tracks per-backend requests-in-flight via atomic counters
+- `loadbalancer/latency.go` tracks per-backend latency via circular buffer with median estimation
+- `loadbalancer/pool/pool.go` implements a bounded probe pool with HCL-inspired selection
+- `server/server.go` dispatches backend selection by route algorithm and uses pool-based HCL selection for the `prequal` path
+- `observability/metrics.go` exports Prometheus metrics
+- controller, router, and proxy tests exist
 
 ### What is already good
 
 - informer plus workqueue controller model is correct
 - `EndpointSlice` usage is the right modern Kubernetes choice
 - the split between controller, router, backend store, selector, and proxy is sensible
-- a separate algorithm interface already exists
-- round robin is already implemented
-- the project already has tests and basic metrics, which is better than an empty prototype
+- segment-aware trie handles Kubernetes `Prefix` matching correctly
+- ingress class handling now supports:
+  - `spec.ingressClassName`
+  - legacy annotation `kubernetes.io/ingress.class`
+  - non-standard label fallback for compatibility
+- per-backend RIF tracking and latency estimation are implemented
+- HCL-inspired selection with bounded probe pool is operational
+- route-level algorithm selection exists
+- tests and metrics exist across controller, router, and proxy
 
 ### What is still incomplete or incorrect
 
-- ingress semantics are not fully standards-correct yet
-- ingress class support is incomplete and uses a non-standard label fallback
-- path matching does not fully match Kubernetes `Prefix` behavior
-- exact-route fallback behavior is not correct
 - routing state and backend state are published as separate mutable structures
 - there is no full ingress-controller operator story yet:
   - no `IngressClass` resource handling
   - no ingress status updates
   - no TLS support
   - no production-oriented service exposure model
-- the sidecar currently counts TCP socket state, which is not equivalent to request-level RIF
-- there is no real Prequal probe pool, HCL rule, async probing loop, or request-aware latency model yet
+- the `prequal` path is still based on proxy-local signals plus local random pool seeding
+- there is still no async probing loop to backend services
+- there is still no backend-native probe endpoint integration
+- there is no server-local signal source in the current request path
+- there is no RIF-conditioned latency estimation matching the paper
+- there are no configurable probe rates and removal policies matching the paper
 
 ---
 
@@ -107,20 +116,23 @@ The balancing goal is not generic "smart load balancing." It is specifically a K
 - use RIF and latency, not CPU, as the primary decision signals
 - use HCL rather than a linear combination of latency and RIF
 - use bounded probe pools
-- use proxy-local signals (client-local RIF and latency observed from completed requests)
+- sample backend load information via active probes
 
 ### Signal source decision
 
-The current implementation uses proxy-local signals only — no eBPF sidecar, no async probe RPCs to backends. Each proxy observes RIF and latency from its own requests and feeds "virtual probes" into the pool.
+The intended long-term signal source is now:
 
-This is a deliberate simplification:
+- backend services expose a lightweight probe endpoint
+- that endpoint returns server-local RIF and latency estimate
+- the ingress proxy collects probe responses and feeds them into the pool
 
-- with a single ingress replica, client-local signals are identical to server-local signals
-- the paper shows client-local RIF-based selection already significantly outperforms round-robin
-- the full Prequal algorithm (probe pool, HCL, pool management) works identically regardless of signal source
-- eBPF sidecar and async probing can be added later as a signal quality upgrade without changing the algorithm
+The current implementation is a temporary approximation:
 
-If server-local signals are needed later (multiple ingress replicas, backends receiving external traffic), the pool's `Add` method accepts entries from any source — plug in a probe endpoint or eBPF sidecar without changing the selection logic.
+- each proxy observes client-local RIF and latency from its own requests
+- each proxy seeds the pool from random backends
+- each proxy feeds completed-request observations back into the pool
+
+This is useful for early algorithm development, but it is not the final design.
 
 ### Protocol scope
 
@@ -128,9 +140,8 @@ The initial target is `HTTP/1.1` backends only.
 
 This is the correct first scope because:
 
+- backend probe endpoints are easy to define over HTTP
 - request inference is much more feasible than for `HTTP/2` or gRPC
-- keep-alive still exists, but request boundaries are easier to reason about
-- the sidecar can be useful earlier
 - ingress correctness can be developed without immediately solving multiplexed protocols
 
 Explicit non-goal for the first phase:
@@ -148,16 +159,14 @@ Explicit non-goal for the first phase:
 - in-memory routing state
 - `EndpointSlice`-driven backend discovery
 - selector abstraction
-- sidecar as an optional signal-upgrade layer
 - independent per-proxy decision-making with no shared balancing state across proxies
 
 ### What to change
 
 - move toward explicit internal models instead of coupling everything directly to Kubernetes object details
-- fix routing semantics before more algorithm work
 - publish route and backend state more coherently
-- make the sidecar request-aware rather than connection-aware
-- keep the data plane correct even when no sidecar is present
+- move from proxy-local approximation to backend probe integration
+- keep the data plane correct even when probe data is missing or stale
 
 ### Target package shape
 
@@ -174,7 +183,7 @@ You do not need to refactor everything immediately, but the code should move tow
 - `proxy/`
   - request forwarding, transport behavior, per-backend accounting
 - `signals/`
-  - RIF tracking, latency estimation, sidecar integration, probe handling
+  - probe client, probe ingestion, RIF tracking, latency estimation
 - `observability/`
   - metrics, logs, debug, health
 
@@ -187,7 +196,7 @@ That means:
 - each proxy keeps its own local in-memory balancing state
 - each proxy maintains its own probe pool
 - there is no shared global coordination layer for backend selection
-- sidecar responses expose server-local signals, but selection decisions remain proxy-local
+- backends expose server-local signals, but selection decisions remain proxy-local
 
 This is an important architectural property because it:
 
@@ -198,50 +207,29 @@ This is an important architectural property because it:
 
 ---
 
-## 5. Critical Issues To Fix First
+## 5. Critical Issues To Fix Or Improve
 
-### 5.1 Ingress semantics
+### 5.1 Ingress-controller completeness
 
-The project wants to become a real ingress controller, so standards correctness matters.
+The project is moving beyond routing correctness and now needs controller completeness work.
 
-You should support:
+Still missing:
 
-- `spec.ingressClassName`
-- legacy annotation `kubernetes.io/ingress.class`
-- eventually `IngressClass` resources
+- `IngressClass` resource handling
+- ingress status updates
+- TLS support
+- production-oriented service exposure and deployment story
 
-You should not depend on:
-
-- `metadata.labels["ingress.class"]` as a primary compatibility mechanism
-
-### 5.2 Kubernetes path matching correctness
-
-Current routing is based on radix longest-prefix lookup, but Kubernetes `Prefix` matching is path-element aware, not raw byte-prefix matching.
-
-That means:
-
-- `/api` should match `/api` and `/api/...`
-- `/api` should not match `/apiv2`
-
-This needs to be fixed early because otherwise the controller is not ingress-correct.
-
-### 5.3 Exact vs prefix fallback behavior
-
-If the longest raw prefix is an `Exact` route that does not exactly match the request path, the router should still be able to fall back to a shorter valid prefix route where appropriate.
-
-That behavior is currently too naive and should be corrected before advanced selector work.
-
-### 5.4 State publication model
+### 5.2 State publication model
 
 Right now route state and backend state are updated separately.
 
 That is workable for the current code, but it will become fragile once you add:
 
-- richer route semantics
-- policy selection
-- backend metadata
-- signal-driven selection
-- multiple concurrent reconciliation events
+- backend probe metadata
+- staleness handling
+- multiple policies
+- more reconciliation paths
 
 Move toward explicit domain models such as:
 
@@ -250,278 +238,346 @@ Move toward explicit domain models such as:
 - `BackendSet`
 - `EndpointState`
 - `SelectionPolicy`
+- `ProbeObservation`
 
-### 5.5 Sidecar signal fidelity
+### 5.3 Current virtual-probe limitation
 
-This is the biggest conceptual risk in the Prequal adaptation.
+The current proxy-local HCL path is a useful intermediate step, but it is not yet faithful to the paper's sampling model.
 
-The reason for sidecar plus eBPF is valid:
+Current behavior:
 
-- avoid requiring application code changes
-- make signal collection deployable across arbitrary workloads
+- the pool is seeded from random backends on each request
+- completed requests also feed observations back into the pool
+- selection still depends on proxy-local observations, not backend-reported state
 
-But for the sidecar to be useful, it should aim to infer request start and response completion, not just socket presence.
+Implication:
 
-Why:
+- the current implementation should be treated as an HCL-inspired approximation, not a full Prequal reproduction
 
-- TCP `ESTABLISHED` count is not request RIF
-- with `HTTP/1.1` keep-alive, one socket may be idle or active
-- connection count may undercount or misrepresent true concurrent in-flight requests
-- latency cannot be estimated correctly from socket presence alone
+### 5.4 Missing active probing
 
-This point must be treated as a core architectural requirement, not a nice-to-have.
+The biggest remaining algorithm gap is the absence of real probing.
+
+Still missing:
+
+- background goroutines that issue probe requests
+- backend probe timeout handling
+- integration of probe responses into the pool
+- probe freshness and staleness handling
+- probe error handling
+
+### 5.5 Missing backend-native signal contract
+
+The backend probe API has not been defined yet.
+
+Before implementing probes, define exactly what a backend returns.
+
+At minimum:
+
+- `rif`
+- `latency_median_ms`
+- `timestamp_ms`
+
+Possibly also:
+
+- `sample_count`
+- `latency_p90_ms`
+- `healthy`
+- `signal_age_ms`
+
+### 5.6 Paper fidelity gaps
+
+Even after backend probing is added, there are still paper-level details that need attention:
+
+- RIF-conditioned latency estimation
+- configurable probe rate
+- configurable removal rate
+- reuse budget behavior matching the paper more closely
+- clear handling of stale observations
 
 ---
 
-## 6. Sidecar And eBPF Plan
+## 6. Backend Probe Endpoint Plan
 
 ### Goal
 
-Build a sidecar that can expose server-local load signals for `HTTP/1.1` workloads without requiring application code changes.
+Build a small backend-side service or embedded handler that exposes server-local signals for probing.
 
-The sidecar should provide:
+The backend probe endpoint should provide:
 
 - server-local request RIF
-- recent request latency estimates
-- a probe endpoint the ingress data plane can query
-
-### Important principle
-
-The sidecar should infer request lifecycle, not merely connection lifecycle.
-
-The useful events are:
-
-- request start
-- response completion
-
-From these, you can derive:
-
-- current RIF: increment on request start, decrement on response completion
-- request latency: completion time minus start time
-- recent latency summaries for probing
-
-### What not to do
-
-Do not treat these as sufficient:
-
-- number of `ESTABLISHED` sockets
-- total open file descriptors
-- TCP connection count alone
-
-Those are at best rough pressure signals, not true request-level signals.
-
-### How to do this for `HTTP/1.1`
-
-There are several reasonable approaches. The plan should use them in this order:
-
-#### Stage A: define the signal model first
-
-Before deep eBPF work, define exactly what the sidecar reports:
-
-- `rif`: number of active in-flight HTTP requests currently being processed by the backend
-- `latency_median_ms`: median of recent completed request latencies
-- `timestamp_ms`
-- optional:
-  - `sample_count`
-  - `latency_p90_ms`
-  - `signal_age_ms`
-
-#### Stage B: start with request-aware but simpler instrumentation
-
-Use the simplest approach that can infer request begin and end for `HTTP/1.1`.
-
-Possible options:
-
-- user-space transparent proxy sidecar
-  - intercept app traffic locally
-  - parse `HTTP/1.1` request boundaries
-  - increment RIF when request headers/body are accepted
-  - decrement when response is fully sent
-- socket-level sidecar with protocol parsing
-  - observe reads/writes for the backend process
-  - reconstruct request/response boundaries for `HTTP/1.1`
-
-This phase is about getting correct request-aware signals, even if it is not yet the final eBPF implementation.
-
-#### Stage C: eBPF-based lifecycle inference
-
-Once the signal model is validated, move to eBPF-assisted collection.
-
-Potential eBPF strategy:
-
-- attach to socket and syscall boundaries relevant to backend traffic
-- correlate events by connection tuple and process identity
-- detect request bytes arriving and response completion progress
-- maintain per-connection parser state for `HTTP/1.1`
-- maintain a sidecar-local in-flight request counter
-- record per-request completion durations into a sliding window
-
-The sidecar then serves `/probe` by returning:
-
-- current request-level RIF
 - recent latency estimate
+- timestamp of the measurement
 
-### Practical constraints
+### Why this is the right direction
 
-You should explicitly account for:
+This is closer to the paper than sidecar/eBPF for your project:
 
-- kernel version compatibility
-- required capabilities and security posture
-- per-connection parser complexity
-- chunked responses and persistent connections
-- large bodies and streaming behavior
-- correctness under retries and client disconnects
+- the paper assumes server-side load reporting
+- you avoid kernel/eBPF complexity
+- you get explicit request-level semantics
+- the probe contract is easier to test and reason about
 
-### Recommended first implementation rule
+### Probe response contract
 
-For the first useful version:
+The recommended initial response payload is:
 
-- support only non-upgraded `HTTP/1.1`
-- support keep-alive
-- do not promise correctness for `HTTP/2`, WebSockets, or gRPC
+```json
+{
+  "rif": 3,
+  "latency_median_ms": 12,
+  "timestamp_ms": 1710000000000
+}
+```
+
+Recommended future extensions:
+
+```json
+{
+  "rif": 3,
+  "latency_median_ms": 12,
+  "latency_p90_ms": 25,
+  "sample_count": 64,
+  "healthy": true,
+  "timestamp_ms": 1710000000000
+}
+```
+
+### Backend responsibilities
+
+Each backend should:
+
+- increment RIF when a request starts
+- decrement RIF when a request completes
+- record request durations
+- expose recent latency summary
+- return probe data quickly and cheaply
+
+### Proxy responsibilities
+
+The ingress proxy should:
+
+- sample backends uniformly at random for probes
+- call backend probe endpoints asynchronously
+- store probe responses in the local probe pool
+- use those responses for HCL selection
+- fall back safely when probes are missing or stale
+
+### Transitional strategy
+
+Until backend probing is fully implemented:
+
+- keep the current proxy-local trackers
+- keep the current random seeding and virtual-probe feedback
+- use that path only as a temporary approximation
+
+Once backend probes exist:
+
+- populate the pool primarily from backend probe responses
+- keep local request observations only as optional supplementary signal
 
 ---
 
-## 7. Corrected Implementation Roadmap
+## 7. Detailed Next Steps
 
-### Phase 1: Make the ingress core correct (DONE)
+This is the concrete work that should happen next.
 
-- correct ingress-class handling via `spec.ingressClassName`
-- path matching using segment-aware trie (Kubernetes `Prefix` semantics)
-- exact route with correct fallback to shorter prefix routes
-- deterministic route update and deletion behavior
-- robust endpoint resolution from `EndpointSlice`
-- controller, router, and proxy tests
-- Prometheus metrics and health endpoints
+### Step 1: Update the plan and remove sidecar direction
 
-### Phase 2: Harden the data plane and algorithm interface (DONE)
+Done conceptually, but this should remain consistent across the repo.
 
-- round robin as baseline selector
-- selector interface for pluggable algorithms
-- explicit policy selection from ingress annotations (`lb/algo`)
-- request-level per-backend accounting (RIF tracker, latency tracker)
+Actions:
 
-### Phase 3: Add passive request-level signals in the data plane (DONE)
+- remove sidecar/eBPF as the intended architecture direction
+- treat `probe/probe.go` as deprecated experiment or remove it later
+- align comments and docs with backend-native probe endpoints
 
-- per-backend in-flight request counters via atomic RIF tracker
-- per-backend completed request latency tracking via circular buffer
-- median latency estimation
-- least-connections selector using RIF (validated signal correctness)
+### Step 2: Define the backend probe API
 
-### Phase 4: Implement Prequal core mechanics (DONE)
+Before implementing probing logic, define the interface.
 
-- bounded probe pool (16 entries)
-- HCL (Hot-Cold Lexicographic) selection rule
-- pool management: age timeout (1s), reuse budget, worst-probe removal (alternating oldest/highest-load)
-- pool occupancy fallback to random when below 2 entries
-- RIF increment on selected probe entries
-- virtual probes fed from completed proxy requests (proxy-local signals)
-- each proxy instance maintains its own independent probe pool
-- no shared probe state or centralized balancing coordinator
+Actions:
 
-### Phase 5: Validation and load testing (NEXT)
+- choose probe path, for example `/prequal/probe`
+- define JSON schema
+- define timeout expectations
+- define meaning of each field
+- decide whether probe endpoint lives in the backend service directly or a tiny co-deployed helper process
 
-Deploy and measure the Prequal implementation:
+Deliverable:
 
-- rebuild and deploy to kind cluster
-- build a backend service with configurable latency/load for realistic testing
-- load tests comparing algorithms head-to-head:
-  - round robin (baseline)
-  - least-connections (RIF-only)
-  - Prequal HCL (probe pool with RIF + latency)
-- test with 1 ingress replica (client-local = server-local, best case for proxy-local signals)
-- test with multiple ingress replicas (client-local ≠ server-local, reveals the blind spot)
-- compare tail latency between single and multiple replica setups
-- simulate uneven backend load (some backends slower than others)
-- simulate antagonist load (external traffic hitting some backends)
-- measure churn behavior (pod restarts, scaling up/down)
+- written probe contract with example request/response
 
-Primary evaluation metric:
+### Step 3: Implement a minimal backend probe service
 
-- tail latency improvement (p90, p99, p99.9) under uneven and antagonistic load
+Build a small backend implementation that exposes real server-local signals.
 
-Secondary metrics:
+Actions:
 
+- track in-flight requests
+- track recent latencies
+- expose probe endpoint
+- add tests for probe responses
+
+Deliverable:
+
+- one backend that can be probed by the ingress proxy
+
+### Step 4: Add async probe collection in the proxy
+
+This is the biggest technical next step.
+
+Actions:
+
+- add background probe goroutines
+- select backend targets uniformly at random
+- call probe endpoints with short timeouts
+- parse probe responses
+- feed them into the pool
+- keep probe logic isolated from request forwarding logic
+
+Deliverable:
+
+- live backend probe responses entering the pool
+
+### Step 5: Make pool population probe-driven
+
+Shift the pool toward real probe responses.
+
+Actions:
+
+- reduce dependence on virtual probe feedback
+- use backend probe responses as the primary pool input
+- define how old entries expire
+- decide how local observations should supplement or not supplement the pool
+
+Deliverable:
+
+- pool population mainly reflects backend-reported state
+
+### Step 6: Improve algorithm tests
+
+Current tests are useful, but the algorithm layer needs more specific coverage.
+
+Add tests for:
+
+- annotation-driven algorithm dispatch
+- unknown algorithm fallback
+- least-connections behavior under uneven RIF
+- HCL behavior on synthetic pool states
+- stale probe handling
+- empty/low-occupancy pool fallback
+
+Deliverable:
+
+- algorithm-specific confidence, not just proxy smoke tests
+
+### Step 7: Improve state modeling
+
+The current controller shape works, but probe integration will add complexity.
+
+Actions:
+
+- define explicit route and backend models
+- reduce coupling between controller internals and proxy runtime internals
+- decide where probe metadata lives
+
+Deliverable:
+
+- clearer ownership between reconciliation, routing, and balancing state
+
+### Step 8: Add observability for probing
+
+Probing is hard to reason about without visibility.
+
+Add metrics for:
+
+- probes sent
+- probes succeeded
+- probes timed out
+- pool occupancy
+- pool age distribution
+- selection algorithm counts
+- stale probe drops
+
+Deliverable:
+
+- enough visibility to debug probe behavior under load
+
+### Step 9: Improve ingress-controller completeness
+
+Keep the product direction moving, not just the algorithm.
+
+Actions:
+
+- add `IngressClass` handling
+- add ingress status management
+- add TLS roadmap
+- improve deployment manifests
+
+Deliverable:
+
+- progress toward a real ingress controller, not just a research proxy
+
+### Step 10: Evaluate algorithm behavior under load
+
+Eventually you need evidence, not only design.
+
+Compare:
+
+- round robin
+- least-connections
+- current proxy-local HCL approximation
+- probe-driven Prequal path
+
+Measure:
+
+- median latency
+- tail latency
 - error rate
-- reconciliation latency
-- request throughput
-- backend fairness
-- RIF distribution across backends
+- fairness
+- sensitivity to uneven backend load
 
-### Phase 6 (Future): eBPF sidecar and server-local signals
+Deliverable:
 
-Deferred. The current implementation uses proxy-local signals which work well for single-replica setups. If validation in Phase 5 shows significant degradation with multiple ingress replicas, this phase upgrades signals to server-local:
-
-- eBPF sidecar for `HTTP/1.1` request lifecycle inference
-- async probe RPCs to sidecar endpoints
-- sidecar-fed probes replace virtual probes in the pool
-- no changes to HCL or pool management — only the signal source changes
-
-### Phase 7 (Future): Ingress-controller completeness
-
-- `IngressClass` resource handling
-- ingress status updates
-- TLS support
-- production deployment manifests
-- operator documentation
+- evidence that the probe-driven path is better than the approximation and better than simpler policies
 
 ---
 
-## 8. Success Criteria
+## 8. Recommended Immediate Priorities
 
-The project should be considered successful in stages.
+If you want the most sensible order from here, do this:
 
-### Success level 1: ingress core
+1. Define the backend probe contract.
+2. Implement a minimal backend probe endpoint.
+3. Add async probe collection in the proxy.
+4. Feed backend probe responses into the pool.
+5. Add tests and metrics around probing.
+6. Then iterate on paper fidelity details.
 
-- routes correctly according to Kubernetes ingress semantics
-- handles endpoint updates correctly
-- passes unit and end-to-end routing tests
-
-### Success level 2: signal correctness (DONE)
-
-- request-level RIF measured via atomic counters in the proxy
-- per-backend latency tracked via circular buffer with median estimation
-- least-connections selector validated RIF signal correctness
-
-### Success level 3: Prequal adaptation (DONE)
-
-- bounded probe pool (16 entries) and HCL selection rule implemented
-- pool management: age timeout, reuse budget, worst-probe removal
-- virtual probes from proxy-local observations feed the pool
-
-### Success level 4: validation (NEXT)
-
-- load tests demonstrate HCL improves tail latency over round-robin
-- single-replica vs multi-replica comparison quantifies client-local signal limitation
-- system behaves correctly under backend churn and uneven load
-
-### Success level 5 (future): server-local signals
-
-- eBPF sidecar provides server-local RIF and latency for arbitrary workloads
-- measured improvement over proxy-local signals in multi-replica setups
-
-### Success level 6 (future): ingress-controller maturity
-
-- standards-aware ingress behavior
-- stable observability
-- deployable manifests
-- credible operator story
+In parallel, continue ingress-controller completeness work, but do not block the probing architecture on full controller maturity.
 
 ---
 
 ## 9. Final Guidance
 
-The project is strongest when described this way:
+The strongest version of this project is now:
 
-- a custom Kubernetes ingress controller implementing the Prequal paper's HCL algorithm
-- `HTTP/1.1` backends as the initial scope
-- proxy-local signals (client-local RIF + latency) as the current signal source
-- eBPF sidecar as a future upgrade to server-local signals
+- a real custom ingress controller as the end goal
+- `HTTP/1.1` first
+- Prequal-inspired backend selection as the advanced policy layer
+- backend-exposed probe endpoints as the mechanism for server-local signals
 
-Current status: Phases 1-4 are complete. The full Prequal algorithm (probe pool, HCL, pool management) is implemented and running. The next step is validation — deploy, load test, and measure tail latency improvement.
+The biggest mistakes to avoid now are:
 
-The key validation questions to answer:
+- keeping the docs pointed at sidecar/eBPF after deciding against it
+- treating the current proxy-local approximation as if it were already full Prequal
+- adding too much probe complexity before defining the backend probe contract clearly
 
-1. Does HCL measurably improve tail latency over round-robin under uneven backend load?
-2. How much does the improvement degrade with multiple ingress replicas (client-local signal blind spot)?
-3. At what point does the blind spot matter enough to justify the eBPF sidecar?
+The right order is:
+
+1. keep the ingress core stable
+2. define the probe contract
+3. add real async backend probing
+4. make the pool probe-driven
+5. evaluate and refine paper fidelity

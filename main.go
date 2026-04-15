@@ -9,6 +9,7 @@ import (
 	"prequal/controller"
 	"prequal/loadbalancer"
 	"prequal/loadbalancer/pool"
+	"prequal/loadbalancer/roundrobin"
 	"prequal/server"
 
 	"syscall"
@@ -73,7 +74,14 @@ func main() {
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
 	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, tracker, latencyTracker, probePool)
+
+	// Pluggable selectors keyed by ingress annotation value
+	selectors := map[string]loadbalancer.Selector{
+		"round-robin":      &roundrobin.RoundRobin{},
+		"least-connections": &loadbalancer.LeastConnections{Tracker: tracker},
+	}
+
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background

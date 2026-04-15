@@ -34,7 +34,8 @@ func newProxy(router *controller.Router, store *controller.BackendIPStore) *serv
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
 	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
-	return server.NewProxyServer(router, store, tracker, latencyTracker, probePool)
+	selectors := map[string]loadbalancer.Selector{}
+	return server.NewProxyServer(router, store, selectors, tracker, latencyTracker, probePool)
 }
 
 // Test 1: Request forwarded to matched backend
