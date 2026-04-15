@@ -197,21 +197,27 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 
 	observability.RecordPoolOccupancy(len(pool.entries))
 
-	// Build a fresh slice of non-stale entries for HCL selection.
-	// cleanup() already removes entries older than maxAge; this additional
-	// filter drops entries whose probe data is older than maxProbeAge.
-	fresh := pool.entries
+	// Eagerly purge stale entries whose probe data is older than maxProbeAge.
+	// This keeps occupancy accurate and avoids stale entries consuming pool slots.
 	if pool.maxProbeAge > 0 {
-		fresh = make([]*ProbeEntry, 0, len(pool.entries))
-		for _, e := range pool.entries {
-			if time.Since(e.Timestamp) <= pool.maxProbeAge {
-				fresh = append(fresh, e)
+		i := 0
+		size := len(pool.entries)
+		for i < size {
+			if time.Since(pool.entries[i].Timestamp) > pool.maxProbeAge {
+				pool.entries[i] = pool.entries[size-1]
+				pool.entries[size-1] = nil
+				size--
+			} else {
+				i++
 			}
 		}
+		pool.entries = pool.entries[:size]
 	}
 
+	observability.RecordPoolOccupancy(len(pool.entries))
+
 	// Fallback: pool too small
-	if len(fresh) < 2 {
+	if len(pool.entries) < 2 {
 		if len(allBackends) == 0 {
 			return nil, fmt.Errorf("no backends available")
 		}
@@ -226,10 +232,10 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 		}, nil
 	}
 
-	// HCL selection over fresh entries only.
-	// Compute threshold from fresh slice.
-	rifs := make([]int64, len(fresh))
-	for i, e := range fresh {
+	// HCL selection over pool.entries entries only.
+	// Compute threshold from pool.entries slice.
+	rifs := make([]int64, len(pool.entries))
+	for i, e := range pool.entries {
 		rifs[i] = e.RIF
 	}
 	slices.Sort(rifs)
@@ -246,7 +252,7 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 	var bestHotIndex int = -1
 	allHot := true
 
-	for i, e := range fresh {
+	for i, e := range pool.entries {
 		if e.RIF <= threshold {
 			// Cold entry
 			allHot = false
@@ -274,16 +280,9 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 		selectedIndex = bestColdIndex
 	}
 
-	// Decrement uses; remove from pool.entries (not fresh) using backend match.
 	selected.UsesLeft--
 	if selected.UsesLeft <= 0 {
-		// Find the matching entry in pool.entries and remove it.
-		for i, e := range pool.entries {
-			if e == fresh[selectedIndex] {
-				pool.removeAt(i)
-				break
-			}
-		}
+		pool.removeAt(selectedIndex)
 	}
 
 	return selected, nil

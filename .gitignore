@@ -30,6 +30,7 @@ go.work.sum
 # Build output
 bin/
 backend/target/
+backend/.omc/
 # Editor/IDE
 # .idea/
 # .vscode/

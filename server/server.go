@@ -61,12 +61,18 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, s
 func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint) (*controller.Endpoint, error) {
 	switch algo {
 	case "prequal", "":
-		// Seed pool with random probes from the full backend list to avoid selection bias.
-		// The paper samples uniformly at random — we add 1-2 random entries per request.
-		p.seedPool(backends)
+		observability.RecordSelectionAlgorithm("prequal")
+
+		// When no async prober is active, seed pool from local observations
+		// as a bootstrap/fallback mechanism. When the prober is active,
+		// the pool is fed by real backend probes — don't dilute with local seeds.
+		if p.prober == nil {
+			p.seedPool(backends)
+		}
 
 		entry, err := p.pool.Select(backends)
 		if err != nil {
+			observability.RecordSelectionAlgorithm("random_fallback")
 			return nil, err
 		}
 		backendAddr := entry.Backend
@@ -75,22 +81,20 @@ func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint
 	default:
 		sel, exists := p.selectors[algo]
 		if !exists {
-			// Unknown algorithm — fall back to prequal
 			log.Printf("[PROXY] Unknown algorithm %q, falling back to prequal", algo)
 			return p.selectBackend("prequal", backends)
 		}
+		observability.RecordSelectionAlgorithm(algo)
 		return sel.Select(backends)
 	}
 }
 
 // seedPool adds random probes from the full backend list into the pool.
-// This prevents the pool from only containing backends that were already selected
-// (the virtual probe feedback loop problem).
+// Only used as bootstrap/fallback when no async prober is active.
 func (p *ProxyServer) seedPool(backends []*controller.Endpoint) {
 	if len(backends) == 0 {
 		return
 	}
-	// Add 1-2 random backend observations to the pool per request
 	numSeeds := 1
 	if len(backends) > 4 {
 		numSeeds = 2
@@ -191,17 +195,20 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(rec, r)
 	proxyDuration := time.Since(proxyStart)
 
-	// Record latency
+	// Always record latency for local tracking/metrics
 	p.latencyTracker.Record(backendAddr, proxyDuration)
 
-	// Feed virtual probe back into the pool (for prequal algorithm)
-	p.pool.Add(&pool.ProbeEntry{
-		Backend:   backendAddr,
-		Endpoint:  backend,
-		RIF:       p.tracker.Get(backendAddr),
-		Latency:   p.latencyTracker.Median(backendAddr),
-		Timestamp: time.Now(),
-	})
+	// Feed virtual probe back into the pool ONLY when no async prober is active.
+	// When the prober exists, backend probes are the authoritative pool source.
+	if p.prober == nil {
+		p.pool.Add(&pool.ProbeEntry{
+			Backend:   backendAddr,
+			Endpoint:  backend,
+			RIF:       p.tracker.Get(backendAddr),
+			Latency:   p.latencyTracker.Median(backendAddr),
+			Timestamp: time.Now(),
+		})
+	}
 
 	observability.RecordRequest(host, path, observability.StatusCode(rec.statusCode), time.Since(start), backendAddr)
 }
