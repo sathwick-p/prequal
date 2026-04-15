@@ -29,6 +29,7 @@ go.work.sum
 
 # Build output
 bin/
+backend/target/
 # Editor/IDE
 # .idea/
 # .vscode/
