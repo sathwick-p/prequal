@@ -70,8 +70,9 @@ func main() {
 	)
 	ctrl := controller.NewController(factory, store, queue)
 	tracker := &loadbalancer.RIFTracker{}
+	latencyTracker := loadbalancer.NewLatencyTracker()
 	selector := &loadbalancer.LeastConnections{Tracker: tracker}
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selector, tracker)
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selector, tracker, latencyTracker)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background

@@ -29,11 +29,12 @@ type ProxyServer struct {
 	router    *controller.Router
 	ips       *controller.BackendIPStore
 	Transport *http.Transport
-	selector  loadbalancer.Selector
-	tracker   *loadbalancer.RIFTracker
+	selector       loadbalancer.Selector
+	tracker        *loadbalancer.RIFTracker
+	latencyTracker *loadbalancer.LatencyTracker
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector, tracker *loadbalancer.RIFTracker) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -42,8 +43,9 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, s
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 		},
-		selector: selector,
-		tracker:  tracker ,
+		selector:       selector,
+		tracker:        tracker,
+		latencyTracker: latencyTracker,
 	}
 }
 
@@ -55,12 +57,12 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	log.Printf("[PROXY] %s %s Host: %s", r.Method, path, host)
 
-	start := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-
+	
 	// match routes
-
+	
 	pathConfig := p.router.Match(host, path)
+	start := time.Now()
 	if pathConfig == nil {
 		log.Printf("[PROXY] No route found for %s%s", host, path)
 		observability.RecordNoRoute()
@@ -122,6 +124,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	proxyStart := time.Now()
 	proxy.ServeHTTP(rec, r)
+	p.latencyTracker.Record(backendAddr, time.Since(proxyStart))
 	observability.RecordRequest(host, path, observability.StatusCode(rec.statusCode), time.Since(start), backend.String())
 }

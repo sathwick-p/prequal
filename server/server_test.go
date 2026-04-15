@@ -32,7 +32,8 @@ func backendEndpoint(t *testing.T, ts *httptest.Server) *controller.Endpoint {
 func newProxy(router *controller.Router, store *controller.BackendIPStore) *server.ProxyServer {
 	rr := &roundrobin.RoundRobin{}
 	tracker := &loadbalancer.RIFTracker{}
-	return server.NewProxyServer(router, store, rr, tracker)
+	latencyTracker := loadbalancer.NewLatencyTracker()
+	return server.NewProxyServer(router, store, rr, tracker, latencyTracker)
 }
 
 // Test 1: Request forwarded to matched backend
