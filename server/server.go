@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"prequal/controller"
 	"prequal/loadbalancer"
+	"prequal/loadbalancer/pool"
 	"prequal/observability"
 	"strconv"
 	"strings"
@@ -26,15 +27,15 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 type ProxyServer struct {
-	router    *controller.Router
-	ips       *controller.BackendIPStore
-	Transport *http.Transport
-	selector       loadbalancer.Selector
+	router         *controller.Router
+	ips            *controller.BackendIPStore
+	Transport      *http.Transport
 	tracker        *loadbalancer.RIFTracker
 	latencyTracker *loadbalancer.LatencyTracker
+	pool           *pool.ProbePool
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selector loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -43,9 +44,9 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, s
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
 		},
-		selector:       selector,
 		tracker:        tracker,
 		latencyTracker: latencyTracker,
+		pool:           pool,
 	}
 }
 
@@ -58,9 +59,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[PROXY] %s %s Host: %s", r.Method, path, host)
 
 	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-	
+
 	// match routes
-	
 	pathConfig := p.router.Match(host, path)
 	start := time.Now()
 	if pathConfig == nil {
@@ -81,7 +81,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backend, err := p.selector.Select(backends)
+	// Select backend via probe pool (HCL) with fallback to random
+	entry, err := p.pool.Select(backends)
 	if err != nil {
 		observability.RecordNoBackends()
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
@@ -89,7 +90,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	observability.RecordBackendSelection(backend.String(), pathConfig.Algorithm)
+	backend := entry.Endpoint
+	backendAddr := backend.String()
+	observability.RecordBackendSelection(backendAddr, pathConfig.Algorithm)
+
+	// Increment RIF in both the pool entry and the tracker
+	p.pool.IncrementRIF(backendAddr)
+	p.tracker.Increase(backendAddr)
+	defer p.tracker.Decrease(backendAddr)
 
 	target := fmt.Sprintf(
 		"http://%s",
@@ -98,19 +106,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[PROXY] Forwarding to %s", target)
 
-	// 5. Parse target URL
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		http.Error(rec, "invalid backend", http.StatusInternalServerError)
-		observability.RecordRequest(host, path, observability.StatusCode(http.StatusInternalServerError), time.Since(start), backend.String())
+		observability.RecordRequest(host, path, observability.StatusCode(http.StatusInternalServerError), time.Since(start), backendAddr)
 		return
 	}
-	backendAddr := backend.Addr()
-	p.tracker.Increase(backendAddr)
-	defer p.tracker.Decrease(backendAddr)
 
 	// Creating Reverse proxy
-
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
@@ -126,6 +129,19 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	proxyStart := time.Now()
 	proxy.ServeHTTP(rec, r)
-	p.latencyTracker.Record(backendAddr, time.Since(proxyStart))
-	observability.RecordRequest(host, path, observability.StatusCode(rec.statusCode), time.Since(start), backend.String())
+	proxyDuration := time.Since(proxyStart)
+
+	// Record latency
+	p.latencyTracker.Record(backendAddr, proxyDuration)
+
+	// Feed virtual probe back into the pool
+	p.pool.Add(&pool.ProbeEntry{
+		Backend:   backendAddr,
+		Endpoint:  backend,
+		RIF:       p.tracker.Get(backendAddr),
+		Latency:   p.latencyTracker.Median(backendAddr),
+		Timestamp: time.Now(),
+	})
+
+	observability.RecordRequest(host, path, observability.StatusCode(rec.statusCode), time.Since(start), backendAddr)
 }

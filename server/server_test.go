@@ -10,8 +10,9 @@ import (
 
 	"prequal/controller"
 	"prequal/loadbalancer"
-	"prequal/loadbalancer/roundrobin"
+	"prequal/loadbalancer/pool"
 	"prequal/server"
+	"time"
 )
 
 // backendEndpoint extracts host and port from a test server's listener address.
@@ -30,10 +31,10 @@ func backendEndpoint(t *testing.T, ts *httptest.Server) *controller.Endpoint {
 }
 
 func newProxy(router *controller.Router, store *controller.BackendIPStore) *server.ProxyServer {
-	rr := &roundrobin.RoundRobin{}
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
-	return server.NewProxyServer(router, store, rr, tracker, latencyTracker)
+	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
+	return server.NewProxyServer(router, store, tracker, latencyTracker, probePool)
 }
 
 // Test 1: Request forwarded to matched backend
@@ -125,10 +126,10 @@ func TestBackendErrorReturns502(t *testing.T) {
 	}
 }
 
-// Test 5: Round-robin distributes requests across backends
-func TestRoundRobinDistributes(t *testing.T) {
+// Test 5: HCL pool distributes requests across backends
+func TestHCLDistributes(t *testing.T) {
 	const numBackends = 3
-	const totalRequests = 6
+	const totalRequests = 30
 
 	counts := make([]atomic.Int32, numBackends)
 	backends := make([]*httptest.Server, numBackends)
@@ -162,10 +163,11 @@ func TestRoundRobinDistributes(t *testing.T) {
 		}
 	}
 
-	expected := totalRequests / numBackends
+	// HCL doesn't guarantee exact equal distribution like round-robin,
+	// but all backends should receive at least some traffic.
 	for i, c := range counts {
-		if got := int(c.Load()); got != expected {
-			t.Errorf("backend %d: expected %d requests, got %d", i, expected, got)
+		if got := int(c.Load()); got == 0 {
+			t.Errorf("backend %d: received 0 requests out of %d, expected some traffic", i, totalRequests)
 		}
 	}
 }

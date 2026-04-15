@@ -8,6 +8,7 @@ import (
 	signal "os/signal"
 	"prequal/controller"
 	"prequal/loadbalancer"
+	"prequal/loadbalancer/pool"
 	"prequal/server"
 
 	"syscall"
@@ -71,8 +72,8 @@ func main() {
 	ctrl := controller.NewController(factory, store, queue)
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
-	selector := &loadbalancer.LeastConnections{Tracker: tracker}
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selector, tracker, latencyTracker)
+	probePool := pool.NewProbePool(16, 1*time.Second, 3, 0.75)
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, tracker, latencyTracker, probePool)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background
