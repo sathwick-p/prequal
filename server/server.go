@@ -35,9 +35,10 @@ type ProxyServer struct {
 	tracker        *loadbalancer.RIFTracker
 	latencyTracker *loadbalancer.LatencyTracker
 	pool           *pool.ProbePool
+	prober         *loadbalancer.Prober
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool) *ProxyServer {
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool, prober *loadbalancer.Prober) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -50,6 +51,7 @@ func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, s
 		tracker:        tracker,
 		latencyTracker: latencyTracker,
 		pool:           pool,
+		prober:         prober,
 	}
 }
 
@@ -135,6 +137,11 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
 		observability.RecordRequest(host, path, observability.StatusCode(http.StatusServiceUnavailable), time.Since(start), "")
 		return
+	}
+
+	// Fire async probes to keep the pool fresh without blocking the request.
+	if p.prober != nil {
+		p.prober.TriggerProbes(pathConfig.Key)
 	}
 
 	// Select backend using the algorithm specified in the ingress annotation

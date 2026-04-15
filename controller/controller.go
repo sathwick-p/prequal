@@ -325,6 +325,17 @@ func (c *BackendIPStore) Get(key string) []*Endpoint {
 	endpoints := c.ips[key]
 	return append([]*Endpoint(nil), endpoints...)
 }
+
+// Keys returns all route keys currently in the store.
+func (c *BackendIPStore) Keys() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	keys := make([]string, 0, len(c.ips))
+	for k := range c.ips {
+		keys = append(keys, k)
+	}
+	return keys
+}
 func (c *Controller) syncAllIngresses() {
 	ingresses, err := c.networkingLister.List(labels.Everything())
 	if err != nil {

@@ -77,11 +77,16 @@ func main() {
 
 	// Pluggable selectors keyed by ingress annotation value
 	selectors := map[string]loadbalancer.Selector{
-		"round-robin":      &roundrobin.RoundRobin{},
+		"round-robin":       &roundrobin.RoundRobin{},
 		"least-connections": &loadbalancer.LeastConnections{Tracker: tracker},
 	}
 
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool)
+	stop := make(chan struct{})
+
+	prober := loadbalancer.NewProber(probePool, store, 8080, 100*time.Millisecond, 1.0, stop)
+	go prober.Run()
+
+	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool, prober)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background
@@ -91,7 +96,6 @@ func main() {
 			log.Fatalf("Proxy server error: %v", err)
 		}
 	}()
-	stop := make(chan struct{})
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
