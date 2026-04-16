@@ -41,7 +41,9 @@ func newProxy(router *controller.Router, store *controller.BackendIPStore) *serv
 		MaxProbeAge: 2 * time.Second,
 	})
 	selectors := map[string]loadbalancer.Selector{}
-	return server.NewProxyServer(router, store, selectors, tracker, latencyTracker, probePool, nil)
+	cfg := server.DefaultConfig()
+	cfg.LogRequests = false
+	return server.NewProxyServerWithConfig(router, store, selectors, tracker, latencyTracker, probePool, nil, cfg)
 }
 
 // Test 1: Request forwarded to matched backend

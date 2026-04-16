@@ -74,6 +74,7 @@ func main() {
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
 	cfg := loadbalancer.DefaultProbeConfig()
+	cfg.ApplyEnv()
 	probePool := pool.NewProbePool(pool.PoolConfig{
 		MaxSize:     cfg.PoolMaxSize,
 		MaxAge:      cfg.PoolMaxAge,
@@ -93,7 +94,9 @@ func main() {
 	prober := loadbalancer.NewProber(probePool, store, cfg, stop)
 	go prober.Run()
 
-	proxyServer := server.NewProxyServer(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool, prober)
+	serverCfg := server.DefaultConfig()
+	serverCfg.ApplyEnv()
+	proxyServer := server.NewProxyServerWithConfig(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool, prober, serverCfg)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background

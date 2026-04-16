@@ -288,7 +288,7 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey strin
 			continue
 		}
 		for _, endpoint := range slice.Endpoints {
-			if endpoint.Conditions.Ready != nil && *endpoint.Conditions.Ready {
+			if endpointReady(endpoint.Conditions.Ready) {
 				for _, addr := range endpoint.Addresses {
 					allEndpoints = append(allEndpoints, &Endpoint{
 						addr: addr,
@@ -307,6 +307,10 @@ func (c *Controller) syncServiceEndpoints(namespace, serviceName, storeKey strin
 		log.Printf("[SYNC] %s: %+v\n", storeKey, allEndpoints)
 	}
 	observability.SetActiveBackends(storeKey, float64(len(allEndpoints)))
+}
+
+func endpointReady(ready *bool) bool {
+	return ready == nil || *ready
 }
 
 func (c *BackendIPStore) Set(key string, endpoints []*Endpoint) {

@@ -17,8 +17,14 @@ var (
 	ProbesFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "prequal_probes_failed_total",
 	}, []string{"reason"}) // reasons: "timeout", "non_200", "decode_error", "stale"
+	ProbesDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "prequal_probes_dropped_total",
+	}, []string{"reason"}) // reasons: "queue_full"
 	PoolOccupancy = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "prequal_pool_occupancy",
+	})
+	ProbeQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "prequal_probe_queue_depth",
 	})
 	SelectionAlgorithm = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "prequal_selection_algorithm_total",
@@ -29,18 +35,18 @@ var (
 	proxyRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "prequal_proxy_requests_total",
 		Help: "Total number of proxy requests",
-	}, []string{"host", "path", "status_code", "backend"})
+	}, []string{"route_key", "status_code"})
 
 	proxyRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "prequal_proxy_request_duration_seconds",
 		Help:    "Duration of proxy requests in seconds",
 		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
-	}, []string{"host", "path"})
+	}, []string{"route_key"})
 
 	proxyBackendSelectionTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "prequal_proxy_backend_selection_total",
 		Help: "Total number of backend selections",
-	}, []string{"backend", "algorithm"})
+	}, []string{"route_key", "backend", "algorithm"})
 
 	proxyNoRouteTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prequal_proxy_no_route_total",
@@ -74,7 +80,9 @@ func init() {
 		ProbesSent,
 		ProbesSucceeded,
 		ProbesFailed,
+		ProbesDropped,
 		PoolOccupancy,
+		ProbeQueueDepth,
 		SelectionAlgorithm,
 		proxyRequestsTotal,
 		proxyRequestDuration,
@@ -87,9 +95,9 @@ func init() {
 	)
 }
 
-func RecordRequest(host, path, statusCode string, duration time.Duration, backend string) {
-	proxyRequestsTotal.WithLabelValues(host, path, statusCode, backend).Inc()
-	proxyRequestDuration.WithLabelValues(host, path).Observe(duration.Seconds())
+func RecordRequest(routeKey, statusCode string, duration time.Duration) {
+	proxyRequestsTotal.WithLabelValues(routeKey, statusCode).Inc()
+	proxyRequestDuration.WithLabelValues(routeKey).Observe(duration.Seconds())
 }
 
 func RecordNoRoute() {
@@ -105,8 +113,8 @@ func RecordReconciliation(result string, duration time.Duration) {
 	controllerReconciliationDuration.Observe(duration.Seconds())
 }
 
-func RecordBackendSelection(backend, algorithm string) {
-	proxyBackendSelectionTotal.WithLabelValues(backend, algorithm).Inc()
+func RecordBackendSelection(routeKey, backend, algorithm string) {
+	proxyBackendSelectionTotal.WithLabelValues(routeKey, backend, algorithm).Inc()
 }
 
 func SetActiveBackends(routeKey string, count float64) {
@@ -129,8 +137,16 @@ func RecordProbeFailed(reason string) {
 	ProbesFailed.WithLabelValues(reason).Inc()
 }
 
+func RecordProbeDropped(reason string) {
+	ProbesDropped.WithLabelValues(reason).Inc()
+}
+
 func RecordPoolOccupancy(size int) {
 	PoolOccupancy.Set(float64(size))
+}
+
+func RecordProbeQueueDepth(size int) {
+	ProbeQueueDepth.Set(float64(size))
 }
 
 func RecordSelectionAlgorithm(algo string) {

@@ -458,6 +458,42 @@ func TestSyncServiceEndpoints_DeletesStoreEntryWhenNoReadyEndpoints(t *testing.T
 	}
 }
 
+func TestSyncServiceEndpoints_TreatsNilReadyAsReady(t *testing.T) {
+	port := int32(8080)
+
+	eps := &discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "my-svc-nil-ready",
+			Labels: map[string]string{
+				"kubernetes.io/service-name": "my-svc",
+			},
+		},
+		AddressType: discovery.AddressTypeIPv4,
+		Ports: []discovery.EndpointPort{
+			{Port: &port},
+		},
+		Endpoints: []discovery.Endpoint{
+			{
+				Addresses: []string{"10.0.0.3"},
+			},
+		},
+	}
+
+	c := newController(t, eps)
+
+	storeKey := "default/my-svc:8080"
+	c.syncServiceEndpoints("default", "my-svc", storeKey, 8080, "")
+
+	endpoints := c.store.Get(storeKey)
+	if len(endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint in store, got %d", len(endpoints))
+	}
+	if endpoints[0].Addr() != "10.0.0.3" {
+		t.Errorf("unexpected endpoint address: got %q, want %q", endpoints[0].Addr(), "10.0.0.3")
+	}
+}
+
 func TestSyncServiceEndpoints_MatchesByPortName(t *testing.T) {
 	port := int32(9090)
 	portName := "http"

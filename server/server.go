@@ -36,22 +36,31 @@ type ProxyServer struct {
 	latencyTracker *loadbalancer.LatencyTracker
 	pool           *pool.ProbePool
 	prober         *loadbalancer.Prober
+	logRequests    bool
 }
 
 func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool, prober *loadbalancer.Prober) *ProxyServer {
+	return NewProxyServerWithConfig(router, ips, selectors, tracker, latencyTracker, pool, prober, DefaultConfig())
+}
+
+func NewProxyServerWithConfig(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool, prober *loadbalancer.Prober, cfg Config) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:          cfg.MaxIdleConns,
+			MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+			IdleConnTimeout:       cfg.IdleConnTimeout,
+			ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+			ExpectContinueTimeout: cfg.ExpectContinueTimeout,
+			DialContext:           cfg.transport().DialContext,
 		},
 		selectors:      selectors,
 		tracker:        tracker,
 		latencyTracker: latencyTracker,
 		pool:           pool,
 		prober:         prober,
+		logRequests:    cfg.LogRequests,
 	}
 }
 
@@ -118,7 +127,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		host = host[:colonIndex]
 	}
 	path := r.URL.Path
-	log.Printf("[PROXY] %s %s Host: %s", r.Method, path, host)
+	if p.logRequests {
+		log.Printf("[PROXY] %s %s Host: %s", r.Method, path, host)
+	}
 
 	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 
@@ -129,17 +140,19 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[PROXY] No route found for %s%s", host, path)
 		observability.RecordNoRoute()
 		http.Error(rec, "no route found", http.StatusNotFound)
-		observability.RecordRequest(host, path, observability.StatusCode(http.StatusNotFound), time.Since(start), "")
+		observability.RecordRequest("no_route", observability.StatusCode(http.StatusNotFound), time.Since(start))
 		return
 	}
-	log.Printf("[PROXY] Matched: %s → %s", pathConfig.Path, pathConfig.Key)
+	if p.logRequests {
+		log.Printf("[PROXY] Matched: %s → %s", pathConfig.Path, pathConfig.Key)
+	}
 
 	backends := p.ips.Get(pathConfig.Key)
 	if len(backends) == 0 {
 		log.Printf("[PROXY] No backends for %s", pathConfig.Key)
 		observability.RecordNoBackends()
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
-		observability.RecordRequest(host, path, observability.StatusCode(http.StatusServiceUnavailable), time.Since(start), "")
+		observability.RecordRequest(pathConfig.Key, observability.StatusCode(http.StatusServiceUnavailable), time.Since(start))
 		return
 	}
 
@@ -153,12 +166,16 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		observability.RecordNoBackends()
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
-		observability.RecordRequest(host, path, observability.StatusCode(http.StatusServiceUnavailable), time.Since(start), "")
+		observability.RecordRequest(pathConfig.Key, observability.StatusCode(http.StatusServiceUnavailable), time.Since(start))
 		return
 	}
 
 	backendAddr := backend.String()
-	observability.RecordBackendSelection(backendAddr, pathConfig.Algorithm)
+	algorithm := pathConfig.Algorithm
+	if algorithm == "" {
+		algorithm = "prequal"
+	}
+	observability.RecordBackendSelection(pathConfig.Key, backendAddr, algorithm)
 
 	p.tracker.Increase(backendAddr)
 	defer p.tracker.Decrease(backendAddr)
@@ -168,12 +185,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		net.JoinHostPort(backend.Addr(), strconv.Itoa(int(backend.Port()))),
 	)
 
-	log.Printf("[PROXY] Forwarding to %s", target)
+	if p.logRequests {
+		log.Printf("[PROXY] Forwarding to %s", target)
+	}
 
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		http.Error(rec, "invalid backend", http.StatusInternalServerError)
-		observability.RecordRequest(host, path, observability.StatusCode(http.StatusInternalServerError), time.Since(start), backendAddr)
+		observability.RecordRequest(pathConfig.Key, observability.StatusCode(http.StatusInternalServerError), time.Since(start))
 		return
 	}
 
@@ -210,5 +229,5 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	observability.RecordRequest(host, path, observability.StatusCode(rec.statusCode), time.Since(start), backendAddr)
+	observability.RecordRequest(pathConfig.Key, observability.StatusCode(rec.statusCode), time.Since(start))
 }

@@ -3,6 +3,7 @@ package loadbalancer
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/http"
 	"prequal/controller"
@@ -25,8 +26,10 @@ type Prober struct {
 	probePort          int
 	probeTimeout       time.Duration
 	probesPerQuery     float64
+	probeWorkers       int
 	backgroundInterval time.Duration
 	maxProbeAge        time.Duration
+	workCh             chan string
 	client             *http.Client
 	stopCh             <-chan struct{}
 }
@@ -44,8 +47,10 @@ func NewProber(
 		probePort:          cfg.ProbePort,
 		probeTimeout:       cfg.ProbeTimeout,
 		probesPerQuery:     cfg.ProbesPerQuery,
+		probeWorkers:       max(cfg.ProbeWorkers, 1),
 		backgroundInterval: cfg.BackgroundInterval,
 		maxProbeAge:        cfg.MaxProbeAge,
+		workCh:             make(chan string, max(cfg.TriggerQueueSize, 1)),
 		client: &http.Client{
 			Timeout: cfg.ProbeTimeout,
 		},
@@ -116,25 +121,64 @@ func (pr *Prober) ProbeRandom(backends []*controller.Endpoint) {
 	pr.pool.Add(entry)
 }
 
+func (pr *Prober) runWorker() {
+	for {
+		select {
+		case <-pr.stopCh:
+			return
+		case routeKey := <-pr.workCh:
+			observability.RecordProbeQueueDepth(len(pr.workCh))
+			backends := pr.ips.Get(routeKey)
+			pr.ProbeRandom(backends)
+		}
+	}
+}
+
+func (pr *Prober) enqueueProbe(routeKey string) {
+	select {
+	case <-pr.stopCh:
+		return
+	case pr.workCh <- routeKey:
+		observability.RecordProbeQueueDepth(len(pr.workCh))
+	default:
+		observability.RecordProbeDropped("queue_full")
+	}
+}
+
+func (pr *Prober) probesForQuery() int {
+	if pr.probesPerQuery <= 0 {
+		return 0
+	}
+	base := int(math.Floor(pr.probesPerQuery))
+	fractional := pr.probesPerQuery - float64(base)
+	if rand.Float64() < fractional {
+		base++
+	}
+	return base
+}
+
 // TriggerProbes is called once per incoming request. It fires probesPerQuery
 // background probes for the given route key without blocking the request path.
 func (pr *Prober) TriggerProbes(routeKey string) {
-	backends := pr.ips.Get(routeKey)
-	if len(backends) == 0 {
+	if routeKey == "" {
 		return
 	}
-	n := int(pr.probesPerQuery)
-	if n < 1 {
-		n = 1
-	}
+	n := pr.probesForQuery()
 	for i := 0; i < n; i++ {
-		go pr.ProbeRandom(backends)
+		pr.enqueueProbe(routeKey)
 	}
 }
 
 // Run is a background loop that periodically probes random backends to keep the
 // pool fresh during idle periods. It stops when stopCh is closed.
 func (pr *Prober) Run() {
+	for i := 0; i < pr.probeWorkers; i++ {
+		go pr.runWorker()
+	}
+	if pr.backgroundInterval <= 0 {
+		<-pr.stopCh
+		return
+	}
 	ticker := time.NewTicker(pr.backgroundInterval)
 	defer ticker.Stop()
 	for {
@@ -147,8 +191,14 @@ func (pr *Prober) Run() {
 				continue
 			}
 			routeKey := keys[rand.Intn(len(keys))]
-			backends := pr.ips.Get(routeKey)
-			go pr.ProbeRandom(backends)
+			pr.enqueueProbe(routeKey)
 		}
 	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
