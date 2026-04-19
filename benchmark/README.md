@@ -27,7 +27,7 @@ The full campaign plan (scenarios × algorithms × environments) is tracked in
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   benchmark/k6/steady_state.js
@@ -45,7 +45,7 @@ Useful environment overrides:
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   -e RATE=500 \
@@ -65,7 +65,7 @@ Useful environment overrides:
 
 ```bash
 k6 run \
-  -e BASE_URL=http://127.0.0.1:30080/work \
+  -e BASE_URL=http://127.0.0.1:31080/work \
   -e ROUTE_A_HOST=route-a.bench.local \
   -e ROUTE_B_HOST=route-b.bench.local \
   -e ROUTE_A_WEIGHT=8 \
@@ -98,7 +98,7 @@ Drives a linearly increasing arrival rate to find the saturation point of the pr
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   -e START_RATE=50 \
@@ -123,7 +123,7 @@ Alternates quiet idle windows with high-rate burst windows to test the proxy's a
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   -e IDLE_RATE=10 \
@@ -150,7 +150,7 @@ Runs a sustained constant-arrival-rate load for an extended period (default 1 ho
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   -e RATE=200 \
@@ -173,7 +173,7 @@ Intentionally targets the proxy well above its expected saturation point (`RATE 
 
 ```bash
 k6 run \
-  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e TARGET_URL=http://127.0.0.1:31080/work \
   -e HOST_HEADER=bench.local \
   -e WORK_ITERATIONS=1000 \
   -e RATE=1000 \
@@ -206,7 +206,7 @@ k6 run \
 
 ### Fault-injection manifests
 
-`prequal-backend:latest` now implements `FAULT_PROBE_MODE` natively. Set the env var to one of `timeout`, `500`, `malformed`, or `stale_timestamp` to activate the corresponding fault. Optional tunables: `FAULT_TIMEOUT_MS` (default 5000) and `FAULT_STALE_OFFSET_MS` (default 60000). Rebuild the backend image before applying these manifests:
+`prequal-backend:latest` now implements `FAULT_PROBE_MODE` natively. Set the env var to one of `timeout`, `500`, `malformed`, or `stale_timestamp` to activate the corresponding fault. Optional tunables: `FAULT_TIMEOUT_MS` (default 300000, i.e. 5 minutes — set a shorter value on the backend Deployment for partial-timeout behavior) and `FAULT_STALE_OFFSET_MS` (default 60000). Rebuild the backend image before applying these manifests:
 
 ```bash
 cd backend && docker build -t prequal-backend:latest .
@@ -243,7 +243,7 @@ Start it with:
 cd benchmark/observability && docker compose up -d
 ```
 
-Prometheus scrapes the controller metrics endpoint via NodePort **30081** (`host.docker.internal:30081`). Six dashboards are provisioned automatically:
+Prometheus scrapes the controller metrics endpoint via NodePort **31081** (`host.docker.internal:31081`). Six dashboards are provisioned automatically:
 
 | Dashboard | Description |
 |-----------|-------------|
@@ -359,7 +359,7 @@ evidence per `benchmark/public-claim-playbook.md` section 13.
 bash benchmark/scripts/install_nginx_baseline.sh
 
 # Patch the NodePorts to 30180 (http) and 30143 (https) — avoids collision
-# with the prequal controller on 30080/30443.
+# with the prequal controller on 31080/31081.
 kubectl apply -f benchmark/manifests/baseline-nginx-controller.yaml
 ```
 

@@ -93,6 +93,7 @@ fn compute_median(latencies: &VecDeque<f64>) -> f64 {
     let mut sorted: Vec<f64> = latencies.iter().copied().collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mid = sorted.len() / 2;
+    #[allow(clippy::manual_is_multiple_of)]
     if sorted.len() % 2 == 0 {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
@@ -237,7 +238,7 @@ async fn main() {
     let fault_timeout_ms: u64 = std::env::var("FAULT_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(5000);
+        .unwrap_or(300000);
 
     let fault_stale_offset_ms: u64 = std::env::var("FAULT_STALE_OFFSET_MS")
         .ok()

@@ -2,8 +2,8 @@
 # prequal-backend:latest implements FAULT_PROBE_MODE natively.
 # Rebuild before applying: cd backend && docker build -t prequal-backend:latest .
 # Env var contract:
-#   FAULT_PROBE_MODE=timeout  — probe handler sleeps FAULT_TIMEOUT_MS ms (default 5000) before responding
-#   FAULT_TIMEOUT_MS          — optional, milliseconds to sleep (default 5000)
+#   FAULT_PROBE_MODE=timeout  — probe handler sleeps FAULT_TIMEOUT_MS ms (default 300000, i.e. 5 min) before responding
+#   FAULT_TIMEOUT_MS          — optional, milliseconds to sleep (default 300000); set to a shorter value for partial-timeout behavior
 # The /work endpoint is unaffected.
 apiVersion: apps/v1
 kind: Deployment

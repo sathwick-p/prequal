@@ -571,7 +571,7 @@ Campaign report sections:
 
 `prequal-backend:latest` now implements `FAULT_PROBE_MODE` via env-driven mode in the Rust backend. Set `FAULT_PROBE_MODE` to one of the four values to activate the corresponding fault on the `/probe` endpoint:
 
-- `FAULT_PROBE_MODE=timeout` — probe handler sleeps for `FAULT_TIMEOUT_MS` milliseconds (default 5000) before responding, simulating a slow backend
+- `FAULT_PROBE_MODE=timeout` — probe handler sleeps for `FAULT_TIMEOUT_MS` milliseconds (default 300000, i.e. 5 minutes) before responding, simulating a slow backend; set `FAULT_TIMEOUT_MS=<shorter>` on the backend Deployment for partial-timeout behavior
 - `FAULT_PROBE_MODE=500` — probe returns HTTP 500, simulating a backend that rejects probes
 - `FAULT_PROBE_MODE=malformed` — probe returns a non-JSON body, exercising the controller's parse-error path
 - `FAULT_PROBE_MODE=stale_timestamp` — probe returns a valid JSON body with a timestamp offset into the past by `FAULT_STALE_OFFSET_MS` milliseconds (default 60000), exercising staleness detection
