@@ -1,0 +1,109 @@
+{
+  "title": "Prequal: Resource Usage",
+  "uid": "resources",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Resource Metrics Note",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 3 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "options": {
+        "mode": "markdown",
+        "content": "**Note:** Full node/pod resource metrics (CPU throttling, memory limits, network I/O) require adding [node-exporter](https://github.com/prometheus/node_exporter) and/or [cAdvisor](https://github.com/google/cadvisor) to the stack. The panels below use Go process metrics exposed by the controller itself (`process_*`). Add `node-exporter` to `docker-compose.yml` and a scrape config for `node-exporter:9100` to unlock node-level panels."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Controller Resident Memory",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 3, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=\"prequal-controller\"}",
+          "legendFormat": "RSS bytes",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "blue" } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Controller CPU Usage (rate)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 3, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total{job=\"prequal-controller\"}[1m])",
+          "legendFormat": "CPU cores",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "color": { "mode": "fixed", "fixedColor": "orange" } }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Controller Open File Descriptors",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 11, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "process_open_fds{job=\"prequal-controller\"}",
+          "legendFormat": "open fds",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Go Goroutines",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 11, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "go_goroutines{job=\"prequal-controller\"}",
+          "legendFormat": "goroutines",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Go GC Duration (p99)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(go_gc_duration_seconds_bucket{job=\"prequal-controller\"}[5m])))",
+          "legendFormat": "GC p99 duration",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "fixed", "fixedColor": "green" } }
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+groups:
+  - name: prequal_alerts
+    rules:
+      - alert: PrequalProbeQueueDepthHigh
+        expr: prequal_probe_queue_depth > 512
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Probe queue depth is high"
+          description: "prequal_probe_queue_depth is {{ $value }} (threshold: 512) for more than 2 minutes."
+
+      - alert: PrequalProbeDropsNonZero
+        expr: sum(rate(prequal_probes_dropped_total[1m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Probes are being dropped"
+          description: "Probes are being dropped at {{ $value | humanizePercentage }} per second."
+
+      - alert: PrequalReconciliationLatencyHigh
+        expr: prequal_reconciliation:p95 > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Controller reconciliation p95 latency is high"
+          description: "Reconciliation p95 is {{ $value | humanizeDuration }} (threshold: 500ms)."
+
+      - alert: PrequalNoBackendSpikes
+        expr: sum(rate(prequal_proxy_no_backends_total[1m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No-backend events occurring"
+          description: "Requests are failing with no-backends at {{ $value }} per second."
+
+      - alert: PrequalProbeStaleHigh
+        expr: sum by (reason) (rate(prequal_probes_failed_total{reason="stale"}[1m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of stale probe failures"
+          description: "Stale probe failure rate is {{ $value }} per second for reason={{ $labels.reason }}."

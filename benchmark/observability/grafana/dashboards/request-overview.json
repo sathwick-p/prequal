@@ -1,0 +1,202 @@
+{
+  "title": "Prequal: Request Overview",
+  "uid": "request-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Requests/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "job:prequal_requests:rate1m",
+          "legendFormat": "total req/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Error Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum(route:prequal_errors:rate1m)",
+          "legendFormat": "errors/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "red" } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Status Code Breakdown",
+      "type": "table",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status_code) (rate(prequal_proxy_requests_total[1m]))",
+          "legendFormat": "{{ status_code }}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "labelsToFields", "options": {} },
+        { "id": "organize", "options": {} }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Requests/sec by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_requests:rate1m",
+          "legendFormat": "{{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Error Rate by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_errors:rate1m",
+          "legendFormat": "{{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 6,
+      "title": "p50 Latency by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "p50 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 7,
+      "title": "p95 Latency by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_latency:p95",
+          "legendFormat": "p95 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 8,
+      "title": "p99 Latency by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_latency:p99",
+          "legendFormat": "p99 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 9,
+      "title": "p99.9 Latency by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_latency:p999",
+          "legendFormat": "p99.9 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 10,
+      "title": "No-Route Events/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(prequal_proxy_no_route_total[1m])",
+          "legendFormat": "no-route/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "orange" } }
+      }
+    },
+    {
+      "id": 11,
+      "title": "No-Backend Events/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(prequal_proxy_no_backends_total[1m])",
+          "legendFormat": "no-backends/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "red" } }
+      }
+    }
+  ]
+}

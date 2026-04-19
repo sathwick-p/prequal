@@ -224,3 +224,26 @@ kubectl apply -f benchmark/manifests/fault-probe-500.yaml
 kubectl apply -f benchmark/manifests/fault-probe-malformed.yaml
 kubectl apply -f benchmark/manifests/fault-probe-stale-timestamp.yaml
 ```
+
+## Observability stack
+
+A local Prometheus + Grafana stack lives in [`benchmark/observability/`](observability/README.md).
+
+Start it with:
+
+```bash
+cd benchmark/observability && docker compose up -d
+```
+
+Prometheus scrapes the controller metrics endpoint via NodePort **30081** (`host.docker.internal:30081`). Six dashboards are provisioned automatically:
+
+| Dashboard | Description |
+|-----------|-------------|
+| **Request Overview** | req/s, error rate, latency p50-p99.9, no-route/no-backend events |
+| **Algorithm Behavior** | selection counts by algorithm, backend selections, active backends, pool occupancy |
+| **Probe System** | probes sent/succeeded/failed/dropped, queue depth, success ratio |
+| **Control Plane** | reconciliation count + latency percentiles, active backends, no-backend events |
+| **Resource Usage** | controller process memory, CPU rate, goroutines (node-exporter optional for full node metrics) |
+| **Long-Duration Stability** | latency, request rate, error rate, queue depth, dropped probes over 6-24h |
+
+See [benchmark/observability/README.md](observability/README.md) for prerequisites, verification steps, and node-exporter integration.

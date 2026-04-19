@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - "recording-rules.yml"
+  - "alert-rules.yml"
+
+scrape_configs:
+  - job_name: "prequal-controller"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "host.docker.internal:30081"
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets:
+          - "localhost:9090"

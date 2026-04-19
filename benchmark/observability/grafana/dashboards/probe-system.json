@@ -1,0 +1,167 @@
+{
+  "title": "Prequal: Probe System",
+  "uid": "probe-system",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Probes Sent/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(prequal_probes_sent_total[1m])",
+          "legendFormat": "sent/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "blue" } }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Probes Succeeded/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(prequal_probes_succeeded_total[1m])",
+          "legendFormat": "succeeded/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "green" } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Probe Failures/sec by Reason",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(prequal_probes_failed_total[1m]))",
+          "legendFormat": "failed/s ({{ reason }})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 4,
+      "title": "Probes Dropped/sec by Reason",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(prequal_probes_dropped_total[1m]))",
+          "legendFormat": "dropped/s ({{ reason }})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "orange" } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Probe Queue Depth",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_probe_queue_depth",
+          "legendFormat": "queue depth",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 256 },
+              { "color": "red", "value": 512 }
+            ]
+          },
+          "max": 1024
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Probe Queue Depth Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 8, "w": 9, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_probe_queue_depth",
+          "legendFormat": "queue depth",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Pool Occupancy by Route",
+      "type": "timeseries",
+      "gridPos": { "x": 15, "y": 8, "w": 9, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_pool_occupancy",
+          "legendFormat": "{{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Probe Success Ratio",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_probes:success_ratio",
+          "legendFormat": "success ratio",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "title": "Prequal: Long-Duration Stability",
+  "uid": "long-duration",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "60s",
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "p95 Latency by Route (24h view)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_latency:p95",
+          "legendFormat": "p95 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 2,
+      "title": "p99 Latency by Route (24h view)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "route:prequal_latency:p99",
+          "legendFormat": "p99 {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Request Rate Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "job:prequal_requests:rate1m",
+          "legendFormat": "total req/s",
+          "refId": "A"
+        },
+        {
+          "expr": "route:prequal_requests:rate1m",
+          "legendFormat": "{{ route_key }}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Error Rate Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum(route:prequal_errors:rate1m)",
+          "legendFormat": "total errors/s",
+          "refId": "A"
+        },
+        {
+          "expr": "route:prequal_error_ratio:rate1m",
+          "legendFormat": "error ratio {{ route_key }}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Probe Queue Depth Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_probe_queue_depth",
+          "legendFormat": "queue depth",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 256 },
+              { "color": "red", "value": 512 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Dropped Probes Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(prequal_probes_dropped_total[1m]))",
+          "legendFormat": "dropped ({{ reason }})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "red" } }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Pool Occupancy Drift Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prequal-prometheus" },
+      "targets": [
+        {
+          "expr": "prequal_pool_occupancy",
+          "legendFormat": "pool {{ route_key }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    }
+  ]
+}
