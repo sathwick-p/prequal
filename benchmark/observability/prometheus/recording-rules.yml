@@ -2,55 +2,47 @@ groups:
   - name: prequal_recordings
     interval: 15s
     rules:
-      # Total request rate
       - record: job:prequal_requests:rate1m
         expr: sum(rate(prequal_proxy_requests_total[1m]))
 
-      # Request rate by route
       - record: route:prequal_requests:rate1m
         expr: sum by (route_key) (rate(prequal_proxy_requests_total[1m]))
 
-      # Error rate by route (non-2xx)
       - record: route:prequal_errors:rate1m
         expr: sum by (route_key) (rate(prequal_proxy_requests_total{status_code!~"2.."}[1m]))
 
-      # Error ratio by route
+      # ratio: non-2xx over total, by route
       - record: route:prequal_error_ratio:rate1m
         expr: >
           sum by (route_key) (rate(prequal_proxy_requests_total{status_code!~"2.."}[1m]))
           /
           sum by (route_key) (rate(prequal_proxy_requests_total[1m]))
 
-      # p95 latency by route
       - record: route:prequal_latency:p95
         expr: >
           histogram_quantile(0.95,
             sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))
 
-      # p99 latency by route
       - record: route:prequal_latency:p99
         expr: >
           histogram_quantile(0.99,
             sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))
 
-      # p99.9 latency by route
       - record: route:prequal_latency:p999
         expr: >
           histogram_quantile(0.999,
             sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))
 
-      # Probe success ratio (1m)
       - record: prequal_probes:success_ratio
         expr: >
           rate(prequal_probes_succeeded_total[1m])
           /
           rate(prequal_probes_sent_total[1m])
 
-      # Backend selection rate by route, backend, algorithm
       - record: route:prequal_backend_selection:rate1m
         expr: sum by (route_key, backend, algorithm) (rate(prequal_proxy_backend_selection_total[1m]))
 
-      # Reconciliation p95 (5m rate)
+      # p95 over a 5m window — used by PrequalReconciliationLatencyHigh alert
       - record: prequal_reconciliation:p95
         expr: >
           histogram_quantile(0.95,

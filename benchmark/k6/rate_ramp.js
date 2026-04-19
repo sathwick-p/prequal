@@ -11,7 +11,6 @@ const stepDuration = __ENV.STEP_DURATION || '60s';
 const steps = Number(__ENV.STEPS || '6');
 const preAllocatedVUs = Number(__ENV.PRE_ALLOCATED_VUS || '64');
 const maxVUs = Number(__ENV.MAX_VUS || '512');
-const summaryPath = __ENV.SUMMARY_PATH || './summary-rate_ramp.json';
 
 // Build stages: short warmup ramp to startRate, then STEPS stages each ramping
 // to startRate + stepRate*(i) over stepDuration.
