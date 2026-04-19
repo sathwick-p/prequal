@@ -1,0 +1,2 @@
+# Archived run tarballs are derivable from results/<run-dir>/ via archive_results.sh
+results/archive/

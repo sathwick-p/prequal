@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-04-19T08-39-20Z-uniform-smoke-round-robin",
+  "date_utc": "2026-04-19T08:39:20Z",
+  "git_sha": "2db41c40bf43b8b3d05052debab7d9adef714746",
+  "environment": "kind-local",
+  "scenario": "uniform-smoke",
+  "algorithm": "round-robin",
+  "duration_seconds": 60,
+  "target_rate_rps": 0,
+  "workload_manifest": "benchmark/manifests/workload-uniform.yaml",
+  "load_script": "benchmark/k6/steady_state.js",
+  "controller_env": {},
+  "backend_env": {},
+  "notes": "ralph-session smoke run, 1 rep, kind-local"
+}

@@ -31,11 +31,26 @@ Algorithms (`A`) per row: `prequal`, `round-robin`, `least-connections` unless a
 
 Purpose: validate harness, manifests, metrics collection.
 
-| campaign_id | scenario           | environment | algorithm        | script                                  | manifest                                           | rate_model   | duration | repetitions | owner        | status  | results_dir |
-|-------------|--------------------|-------------|------------------|-----------------------------------------|----------------------------------------------------|--------------|----------|-------------|--------------|---------|-------------|
-| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | unassigned   | planned |             |
-| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | unassigned   | planned |             |
-| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | unassigned   | planned |             |
+| campaign_id | scenario           | environment | algorithm        | script                                  | manifest                                           | rate_model   | duration | repetitions | owner        | status       | results_dir |
+|-------------|--------------------|-------------|------------------|-----------------------------------------|----------------------------------------------------|--------------|----------|-------------|--------------|--------------|-------------|
+| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-38-14Z](results/2026-04-19T08-38-14Z-uniform-smoke-prequal/) |
+| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-39-20Z](results/2026-04-19T08-39-20Z-uniform-smoke-round-robin/) |
+| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-40-25Z](results/2026-04-19T08-40-25Z-uniform-smoke-least-connections/) |
+
+### Campaign 1 first-pass results (2026-04-19, E-A kind-local, single rep)
+
+Closed-loop 30 VUs, 60s steady-state, WORK_ITERATIONS=1000, uniform workload (4 backend replicas, WORK_MULTIPLIER=1.0):
+
+| algorithm         | requests | rps    | avg ms | p95 ms | err rate |
+|-------------------|---------:|-------:|-------:|-------:|---------:|
+| prequal           |  264,846 | 4414   | 6.76   | 13.49  | 0        |
+| round-robin       |  311,825 | 5197   | 5.73   | 11.63  | 0        |
+| least-connections |  307,628 | 5127   | 5.81   | 11.65  | 0        |
+
+Observations:
+- Under uniform capacity, round-robin and least-connections outperform prequal on throughput/p95 — consistent with the Prequal paper's claim that probing overhead is only worthwhile when backends have heterogeneous capacity. This is the expected smoke shape.
+- p50/p99/p99.9 were not captured because the existing k6 scripts rely on k6's default `summaryTrendStats` which omits those percentiles. Follow-up: set `summaryTrendStats: ['avg','min','med','max','p(50)','p(95)','p(99)','p(99.9)']` in each k6 script's `options`.
+- Remaining 2 reps per algorithm still to run before declaring Campaign 1 done. Heterogeneous Campaign 2 is the decisive test for `prequal` vs. the baselines.
 
 ## Campaign 2 — Algorithm comparison under controlled load
 
