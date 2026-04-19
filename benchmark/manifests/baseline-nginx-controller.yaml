@@ -17,7 +17,7 @@
 # This file contains only the NodePort patch for the ingress-nginx-controller
 # Service. The upstream manifest uses NodePort by default for kind; this patch
 # pins the specific ports used in this benchmark (30180/http, 30143/https)
-# to avoid colliding with the prequal controller NodePorts (30080/30443).
+# to avoid colliding with the prequal controller NodePorts (31080/31081).
 #
 # Apply AFTER running install_nginx_baseline.sh:
 #   kubectl apply -f benchmark/manifests/baseline-nginx-controller.yaml

@@ -25,9 +25,9 @@ Grafana also allows anonymous read-only access with no login.
 
 ## How controller metrics are scraped
 
-The controller exposes Prometheus metrics on its debug port **8081**, which is exposed as Kubernetes NodePort **30081**.
+The controller exposes Prometheus metrics on its debug port **8081**, which is exposed as Kubernetes NodePort **31081**.
 
-Prometheus is configured to scrape `host.docker.internal:30081/metrics`.
+Prometheus is configured to scrape `host.docker.internal:31081/metrics`.
 
 - **Docker Desktop (macOS / Windows):** `host.docker.internal` resolves automatically.
 - **Linux (Docker Engine):** The `extra_hosts: ["host.docker.internal:host-gateway"]` in `docker-compose.yml` maps the name to your host IP automatically. No manual configuration needed.
@@ -75,6 +75,39 @@ yq eval . benchmark/observability/prometheus/*.yml >/dev/null
 ```
 
 If `promtool` is not installed, steps 2 can be skipped for local development but should be run in CI before publishing results.
+
+## Keeping Prometheus scrape alive
+
+When the controller Service is a ClusterIP (no direct NodePort access), or when
+port-forward connections drop mid-run, Prometheus loses its scrape target.
+`benchmark/scripts/port_forward_scrape.sh` is a supervised wrapper that
+auto-reconnects on exit:
+
+```bash
+# Start the supervisor in the background (log to file)
+nohup benchmark/scripts/port_forward_scrape.sh \
+  &>/tmp/prequal-port-forward.log &
+
+# Check it is running
+cat /tmp/prequal-port-forward.pid
+ps -p "$(cat /tmp/prequal-port-forward.pid)"
+
+# Stop it cleanly
+kill "$(cat /tmp/prequal-port-forward.pid)"
+```
+
+Environment overrides (all optional):
+
+| Variable | Default | Description |
+|---|---|---|
+| `NAMESPACE` | `prequal-benchmark` | Kubernetes namespace |
+| `SVC` | `prequal-proxy` | Service name |
+| `PROXY_PORT` | `31080` | Local port forwarded to container 8080 |
+| `DEBUG_PORT` | `31081` | Local port forwarded to container 8081 (metrics) |
+
+The script writes its PID to `/tmp/prequal-port-forward.pid`, logs reconnect
+events with UTC timestamps to stderr, and exits cleanly on SIGINT/SIGTERM
+without respawning.
 
 ## Adding node-exporter
 

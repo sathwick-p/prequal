@@ -271,6 +271,20 @@ benchmark/scripts/deploy_benchmark_stack.sh
   -> benchmark/scripts/render_report.sh
 ```
 
+### 0. Keep the Prometheus scrape target alive (optional but recommended)
+
+If the controller is exposed via `kubectl port-forward` rather than a direct
+NodePort, start the supervised wrapper before deploying:
+
+```bash
+nohup benchmark/scripts/port_forward_scrape.sh \
+  &>/tmp/prequal-port-forward.log &
+```
+
+It auto-reconnects on drop, writes its PID to `/tmp/prequal-port-forward.pid`,
+and exits cleanly on `kill "$(cat /tmp/prequal-port-forward.pid)"`.
+See [`benchmark/observability/README.md`](observability/README.md) for full options.
+
 ### 1. Deploy the benchmark stack
 
 ```bash

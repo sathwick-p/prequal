@@ -112,8 +112,8 @@ spec:
   - name: proxy
     port: 8080
     targetPort: proxy
-    nodePort: 30080
+    nodePort: 31080
   - name: debug
     port: 8081
     targetPort: debug
-    nodePort: 30081
+    nodePort: 31081

@@ -3,7 +3,7 @@ import { check } from 'k6';
 
 const vus = Number(__ENV.VUS || '50');
 const duration = __ENV.DURATION || '60s';
-const targetURL = __ENV.TARGET_URL || 'http://127.0.0.1:30080/work';
+const targetURL = __ENV.TARGET_URL || 'http://127.0.0.1:31080/work';
 const hostHeader = __ENV.HOST_HEADER || 'test.example.com';
 const iterations = Number(__ENV.WORK_ITERATIONS || '1000');
 

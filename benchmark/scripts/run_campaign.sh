@@ -10,15 +10,17 @@
 #   K6_SCRIPT   Path to a k6 .js script (e.g. benchmark/k6/open_loop.js)
 #
 # Optional env vars:
-#   TARGET_URL         URL sent to k6  (default: http://127.0.0.1:30080/work)
-#   HOST_HEADER        Host header     (default: bench.local)
-#   DURATION           k6 DURATION env var (passed through if set)
-#   RATE               k6 RATE env var     (passed through if set)
-#   WORK_ITERATIONS    k6 WORK_ITERATIONS  (passed through if set)
-#   WORKLOAD_MANIFEST  Path to workload manifest (default: benchmark/manifests/workload-uniform.yaml)
-#   RESULTS_DIR        Root results directory    (default: benchmark/results)
-#   NOTES              Free-text annotation for this run (optional)
-#   K6_DRY_RUN         Set to 1 to skip actual k6 invocation (for testing)
+#   TARGET_URL              URL sent to k6  (default: http://127.0.0.1:31080/work)
+#   HOST_HEADER             Host header     (default: bench.local)
+#   DURATION                k6 DURATION env var (passed through if set)
+#   RATE                    k6 RATE env var     (passed through if set)
+#   WORK_ITERATIONS         k6 WORK_ITERATIONS  (passed through if set)
+#   WORKLOAD_MANIFEST       Path to workload manifest (default: benchmark/manifests/workload-uniform.yaml)
+#   RESULTS_DIR             Root results directory    (default: benchmark/results)
+#   NOTES                   Free-text annotation for this run (optional)
+#   K6_DRY_RUN              Set to 1 to skip actual k6 invocation (for testing)
+#   KUBECTL_TOP_INTERVAL_SEC Seconds between kubectl top samples (default: 5)
+#   NAMESPACE               Kubernetes namespace for kubectl top (default: prequal-benchmark)
 #
 # Output: deterministic directory <RESULTS_DIR>/<DATE_UTC>-<SCENARIO>-<ALGORITHM>/
 # Calls collect_results.sh on completion.
@@ -43,12 +45,42 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 # Defaults
-TARGET_URL="${TARGET_URL:-http://127.0.0.1:30080/work}"
+TARGET_URL="${TARGET_URL:-http://127.0.0.1:31080/work}"
 HOST_HEADER="${HOST_HEADER:-bench.local}"
 WORKLOAD_MANIFEST="${WORKLOAD_MANIFEST:-benchmark/manifests/workload-uniform.yaml}"
 RESULTS_DIR="${RESULTS_DIR:-benchmark/results}"
 NOTES="${NOTES:-}"
 K6_DRY_RUN="${K6_DRY_RUN:-0}"
+KUBECTL_TOP_INTERVAL_SEC="${KUBECTL_TOP_INTERVAL_SEC:-5}"
+NAMESPACE="${NAMESPACE:-prequal-benchmark}"
+
+# ── kubectl top sampler ────────────────────────────────────────────────────────
+# Runs in the background while k6 is active; writes a TSV time-series to
+# ${OUT}/kubectl-top-timeseries.tsv with columns: TIMESTAMP TAB POD TAB CPU TAB MEM.
+# Skips silently if kubectl is not present or top returns an error.
+_sample_kubectl_top() {
+  local outfile="$1"
+  local interval="$2"
+  local namespace="$3"
+  # Write header
+  printf 'TIMESTAMP\tPOD\tCPU\tMEM\n' > "${outfile}"
+  if ! command -v kubectl >/dev/null 2>&1; then
+    return
+  fi
+  while true; do
+    local ts
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    kubectl top pods -n "${namespace}" --no-headers 2>/dev/null \
+      | while IFS= read -r line; do
+          local pod cpu mem
+          pod="$(echo "${line}" | awk '{print $1}')"
+          cpu="$(echo "${line}" | awk '{print $2}')"
+          mem="$(echo "${line}" | awk '{print $3}')"
+          printf '%s\t%s\t%s\t%s\n' "${ts}" "${pod}" "${cpu}" "${mem}"
+        done >> "${outfile}" || true
+    sleep "${interval}"
+  done
+}
 
 # Resolve git SHA gracefully
 GIT_SHA="unknown"
@@ -109,6 +141,17 @@ K6_CMD="k6 ${K6_ARGS[*]}"
 echo "${K6_CMD}" > "${OUT}/command.txt"
 echo "[run_campaign] command: ${K6_CMD}"
 
+# Start background kubectl-top sampler
+SAMPLER_PID=""
+TIMESERIES_FILE="${OUT}/kubectl-top-timeseries.tsv"
+_sample_kubectl_top "${TIMESERIES_FILE}" "${KUBECTL_TOP_INTERVAL_SEC}" "${NAMESPACE}" &
+SAMPLER_PID=$!
+echo "[run_campaign] started kubectl-top sampler (pid=${SAMPLER_PID}, interval=${KUBECTL_TOP_INTERVAL_SEC}s)"
+
+# Export timestamps for collect_results.sh range queries
+export RUN_START_UTC
+RUN_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 if [[ "${K6_DRY_RUN}" == "1" ]]; then
   echo "[run_campaign] K6_DRY_RUN=1: skipping k6 invocation"
   # Write a minimal stub summary so downstream scripts don't break
@@ -117,6 +160,16 @@ if [[ "${K6_DRY_RUN}" == "1" ]]; then
 ENDJSON
 else
   k6 "${K6_ARGS[@]}"
+fi
+
+export RUN_END_UTC
+RUN_END_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Stop the background sampler
+if [[ -n "${SAMPLER_PID}" ]] && kill -0 "${SAMPLER_PID}" 2>/dev/null; then
+  kill "${SAMPLER_PID}" 2>/dev/null || true
+  wait "${SAMPLER_PID}" 2>/dev/null || true
+  echo "[run_campaign] stopped kubectl-top sampler (pid=${SAMPLER_PID})"
 fi
 
 echo "[run_campaign] k6 finished"

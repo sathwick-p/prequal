@@ -7,7 +7,7 @@
 #
 # Collects (skips gracefully if tool missing or endpoint unreachable):
 #   kubectl-top.txt          — kubectl top pods -n prequal-benchmark
-#   routes.json              — GET http://127.0.0.1:30081/routes
+#   routes.json              — GET http://127.0.0.1:31081/routes
 #   controller-logs.txt      — last 2000 lines from deploy/prequal-controller
 #   backend-logs.txt         — concatenated logs from bench-* deployments
 #   prometheus-export/*.json — small PromQL snapshot set (if Prometheus reachable)
@@ -36,7 +36,7 @@ fi
 
 NAMESPACE="${NAMESPACE:-prequal-benchmark}"
 CONTROLLER_HOST="${CONTROLLER_HOST:-127.0.0.1}"
-CONTROLLER_PORT="${CONTROLLER_PORT:-30081}"
+CONTROLLER_PORT="${CONTROLLER_PORT:-31081}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}"
 NOTES="${OUT}/notes.md"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -113,6 +113,7 @@ fi
 
 # ── Prometheus snapshot ───────────────────────────────────────────────────────
 PROM_API="${PROMETHEUS_URL}/api/v1/query"
+PROM_RANGE_API="${PROMETHEUS_URL}/api/v1/query_range"
 PROM_REACHABLE=0
 if command -v curl >/dev/null 2>&1; then
   if curl -sS --max-time 5 "${PROMETHEUS_URL}/-/ready" >/dev/null 2>&1; then
@@ -149,6 +150,49 @@ if [[ "${PROM_REACHABLE}" == "1" ]]; then
 
   prom_query "pool_occupancy" \
     'prequal_pool_occupancy'
+
+  # ── Prometheus range queries (time-series evidence) ────────────────────────
+  # Use RUN_START_UTC / RUN_END_UTC exported by run_campaign.sh when available;
+  # otherwise fall back to a 5-minute window ending now.
+  echo "[collect] Prometheus range queries..."
+  RANGE_END="${RUN_END_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  if [[ -n "${RUN_START_UTC:-}" ]]; then
+    RANGE_START="${RUN_START_UTC}"
+  else
+    # Default: 5 minutes before end
+    RANGE_START="$(date -u -d "${RANGE_END} - 300 seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -v-300S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || echo "${RANGE_END}")"
+  fi
+
+  prom_range_query() {
+    local name="$1"
+    local query="$2"
+    local outfile="${OUT}/prometheus-export/${name}-range.json"
+    if curl -sS --max-time 30 \
+        --data-urlencode "query=${query}" \
+        --data-urlencode "start=${RANGE_START}" \
+        --data-urlencode "end=${RANGE_END}" \
+        --data-urlencode "step=15s" \
+        "${PROM_RANGE_API}" \
+        -o "${outfile}" 2>/dev/null; then
+      note "- prometheus-export/${name}-range.json: collected (${RANGE_START} to ${RANGE_END})"
+    else
+      note "- prometheus-export/${name}-range.json: SKIPPED (range query failed)"
+    fi
+  }
+
+  prom_range_query "cpu_rate" \
+    'rate(process_cpu_seconds_total{job="prequal-controller"}[1m])'
+
+  prom_range_query "rss_bytes" \
+    'process_resident_memory_bytes{job="prequal-controller"}'
+
+  prom_range_query "p95_latency_by_route" \
+    'histogram_quantile(0.95, sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))'
+
+  prom_range_query "p99_latency_by_route" \
+    'histogram_quantile(0.99, sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))'
 
 else
   note "- prometheus-export/: SKIPPED (Prometheus not reachable at ${PROMETHEUS_URL})"

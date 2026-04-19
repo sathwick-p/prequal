@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 
-const baseURL = __ENV.BASE_URL || 'http://127.0.0.1:30080/work';
+const baseURL = __ENV.BASE_URL || 'http://127.0.0.1:31080/work';
 const routeAHost = __ENV.ROUTE_A_HOST || 'route-a.bench.local';
 const routeBHost = __ENV.ROUTE_B_HOST || 'route-b.bench.local';
 const iterations = Number(__ENV.WORK_ITERATIONS || '1000');
