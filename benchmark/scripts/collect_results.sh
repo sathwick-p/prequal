@@ -194,6 +194,12 @@ if [[ "${PROM_REACHABLE}" == "1" ]]; then
   prom_range_query "p99_latency_by_route" \
     'histogram_quantile(0.99, sum by (le, route_key) (rate(prequal_proxy_request_duration_seconds_bucket[1m])))'
 
+  prom_range_query "backend_selection_rate" \
+    'sum by (route_key, backend, algorithm) (rate(prequal_proxy_backend_selection_total[1m]))'
+
+  prom_range_query "selection_algorithm_rate" \
+    'sum by (algorithm) (rate(prequal_selection_algorithm_total[1m]))'
+
 else
   note "- prometheus-export/: SKIPPED (Prometheus not reachable at ${PROMETHEUS_URL})"
 fi
