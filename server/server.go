@@ -34,16 +34,16 @@ type ProxyServer struct {
 	selectors      map[string]loadbalancer.Selector
 	tracker        *loadbalancer.RIFTracker
 	latencyTracker *loadbalancer.LatencyTracker
-	pool           *pool.ProbePool
+	pools          *pool.RoutePools
 	prober         *loadbalancer.Prober
 	logRequests    bool
 }
 
-func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool, prober *loadbalancer.Prober) *ProxyServer {
-	return NewProxyServerWithConfig(router, ips, selectors, tracker, latencyTracker, pool, prober, DefaultConfig())
+func NewProxyServer(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pools *pool.RoutePools, prober *loadbalancer.Prober) *ProxyServer {
+	return NewProxyServerWithConfig(router, ips, selectors, tracker, latencyTracker, pools, prober, DefaultConfig())
 }
 
-func NewProxyServerWithConfig(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pool *pool.ProbePool, prober *loadbalancer.Prober, cfg Config) *ProxyServer {
+func NewProxyServerWithConfig(router *controller.Router, ips *controller.BackendIPStore, selectors map[string]loadbalancer.Selector, tracker *loadbalancer.RIFTracker, latencyTracker *loadbalancer.LatencyTracker, pools *pool.RoutePools, prober *loadbalancer.Prober, cfg Config) *ProxyServer {
 	return &ProxyServer{
 		router: router,
 		ips:    ips,
@@ -58,7 +58,7 @@ func NewProxyServerWithConfig(router *controller.Router, ips *controller.Backend
 		selectors:      selectors,
 		tracker:        tracker,
 		latencyTracker: latencyTracker,
-		pool:           pool,
+		pools:          pools,
 		prober:         prober,
 		logRequests:    cfg.LogRequests,
 	}
@@ -67,7 +67,7 @@ func NewProxyServerWithConfig(router *controller.Router, ips *controller.Backend
 // selectBackend dispatches to the appropriate algorithm based on the annotation.
 // "prequal" or "" (default) uses the probe pool with HCL.
 // Other values (e.g., "round-robin", "least-connections") use the pluggable selector.
-func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint) (*controller.Endpoint, error) {
+func (p *ProxyServer) selectBackend(routeKey, algo string, backends []*controller.Endpoint) (*controller.Endpoint, error) {
 	switch algo {
 	case "prequal", "":
 		observability.RecordSelectionAlgorithm("prequal")
@@ -76,22 +76,22 @@ func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint
 		// as a bootstrap/fallback mechanism. When the prober is active,
 		// the pool is fed by real backend probes — don't dilute with local seeds.
 		if p.prober == nil {
-			p.seedPool(backends)
+			p.seedPool(routeKey, backends)
 		}
 
-		entry, err := p.pool.Select(backends)
+		entry, err := p.pools.Select(routeKey, backends)
 		if err != nil {
 			observability.RecordSelectionAlgorithm("random_fallback")
 			return nil, err
 		}
 		backendAddr := entry.Backend
-		p.pool.IncrementRIF(backendAddr)
+		p.pools.IncrementRIF(routeKey, backendAddr)
 		return entry.Endpoint, nil
 	default:
 		sel, exists := p.selectors[algo]
 		if !exists {
 			log.Printf("[PROXY] Unknown algorithm %q, falling back to prequal", algo)
-			return p.selectBackend("prequal", backends)
+			return p.selectBackend(routeKey, "prequal", backends)
 		}
 		observability.RecordSelectionAlgorithm(algo)
 		return sel.Select(backends)
@@ -100,7 +100,7 @@ func (p *ProxyServer) selectBackend(algo string, backends []*controller.Endpoint
 
 // seedPool adds random probes from the full backend list into the pool.
 // Only used as bootstrap/fallback when no async prober is active.
-func (p *ProxyServer) seedPool(backends []*controller.Endpoint) {
+func (p *ProxyServer) seedPool(routeKey string, backends []*controller.Endpoint) {
 	if len(backends) == 0 {
 		return
 	}
@@ -111,7 +111,7 @@ func (p *ProxyServer) seedPool(backends []*controller.Endpoint) {
 	for range numSeeds {
 		ep := backends[rand.Intn(len(backends))]
 		addr := ep.String()
-		p.pool.Add(&pool.ProbeEntry{
+		p.pools.Add(routeKey, &pool.ProbeEntry{
 			Backend:   addr,
 			Endpoint:  ep,
 			RIF:       p.tracker.Get(addr),
@@ -162,7 +162,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Select backend using the algorithm specified in the ingress annotation
-	backend, err := p.selectBackend(pathConfig.Algorithm, backends)
+	backend, err := p.selectBackend(pathConfig.Key, pathConfig.Algorithm, backends)
 	if err != nil {
 		observability.RecordNoBackends()
 		http.Error(rec, "0 backends available", http.StatusServiceUnavailable)
@@ -220,7 +220,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Feed virtual probe back into the pool ONLY when no async prober is active.
 	// When the prober exists, backend probes are the authoritative pool source.
 	if p.prober == nil {
-		p.pool.Add(&pool.ProbeEntry{
+		p.pools.Add(pathConfig.Key, &pool.ProbeEntry{
 			Backend:   backendAddr,
 			Endpoint:  backend,
 			RIF:       p.tracker.Get(backendAddr),

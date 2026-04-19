@@ -1,0 +1,60 @@
+# Rust backend with /prequal/probe support — 3 replicas
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prequal-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: prequal-backend
+  template:
+    metadata:
+      labels:
+        app: prequal-backend
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prequal-backend
+spec:
+  selector:
+    app: prequal-backend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+# Ingress using prequal algorithm
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-prequal
+  labels:
+    ingress.class: prequal
+  annotations:
+    lb/algo: prequal
+spec:
+  rules:
+  - host: test.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prequal-backend
+            port:
+              number: 8080

@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-uniform
+  namespace: prequal-benchmark
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: bench-uniform
+  template:
+    metadata:
+      labels:
+        app: bench-uniform
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-uniform
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-uniform
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bench-uniform
+  namespace: prequal-benchmark
+  labels:
+    ingress.class: prequal
+  annotations:
+    lb/algo: prequal
+spec:
+  rules:
+  - host: bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-uniform
+            port:
+              number: 8080

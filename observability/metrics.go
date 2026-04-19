@@ -20,9 +20,9 @@ var (
 	ProbesDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "prequal_probes_dropped_total",
 	}, []string{"reason"}) // reasons: "queue_full"
-	PoolOccupancy = prometheus.NewGauge(prometheus.GaugeOpts{
+	PoolOccupancy = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "prequal_pool_occupancy",
-	})
+	}, []string{"route_key"})
 	ProbeQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "prequal_probe_queue_depth",
 	})
@@ -141,8 +141,8 @@ func RecordProbeDropped(reason string) {
 	ProbesDropped.WithLabelValues(reason).Inc()
 }
 
-func RecordPoolOccupancy(size int) {
-	PoolOccupancy.Set(float64(size))
+func RecordPoolOccupancy(routeKey string, size int) {
+	PoolOccupancy.WithLabelValues(routeKey).Set(float64(size))
 }
 
 func RecordProbeQueueDepth(size int) {

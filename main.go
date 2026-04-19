@@ -75,13 +75,13 @@ func main() {
 	latencyTracker := loadbalancer.NewLatencyTracker()
 	cfg := loadbalancer.DefaultProbeConfig()
 	cfg.ApplyEnv()
-	probePool := pool.NewProbePool(pool.PoolConfig{
+	pools := pool.NewRoutePools(pool.PoolConfig{
 		MaxSize:     cfg.PoolMaxSize,
 		MaxAge:      cfg.PoolMaxAge,
 		ReuseLimit:  cfg.PoolReuseLimit,
 		QRIF:        cfg.QRIF,
 		MaxProbeAge: cfg.MaxProbeAge,
-	})
+	}, cfg.PoolMaintenanceInterval)
 
 	// Pluggable selectors keyed by ingress annotation value
 	selectors := map[string]loadbalancer.Selector{
@@ -91,12 +91,13 @@ func main() {
 
 	stop := make(chan struct{})
 
-	prober := loadbalancer.NewProber(probePool, store, cfg, stop)
+	prober := loadbalancer.NewProber(pools, store, cfg, stop)
 	go prober.Run()
+	go pools.Run(stop)
 
 	serverCfg := server.DefaultConfig()
 	serverCfg.ApplyEnv()
-	proxyServer := server.NewProxyServerWithConfig(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, probePool, prober, serverCfg)
+	proxyServer := server.NewProxyServerWithConfig(ctrl.GetRouter(), store, selectors, tracker, latencyTracker, pools, prober, serverCfg)
 	StartDebugServer(ctrl)
 
 	// Start proxy server in background

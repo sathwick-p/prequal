@@ -21,7 +21,7 @@ type ProbeResponse struct {
 
 // Prober sends async HTTP probes to backends and feeds results into the ProbePool.
 type Prober struct {
-	pool               *pool.ProbePool
+	pools              *pool.RoutePools
 	ips                *controller.BackendIPStore
 	probePort          int
 	probeTimeout       time.Duration
@@ -36,13 +36,13 @@ type Prober struct {
 
 // NewProber creates a Prober from a ProbeConfig.
 func NewProber(
-	p *pool.ProbePool,
+	p *pool.RoutePools,
 	ips *controller.BackendIPStore,
 	cfg ProbeConfig,
 	stopCh <-chan struct{},
 ) *Prober {
 	return &Prober{
-		pool:               p,
+		pools:              p,
 		ips:                ips,
 		probePort:          cfg.ProbePort,
 		probeTimeout:       cfg.ProbeTimeout,
@@ -109,7 +109,7 @@ func (pr *Prober) ProbeBackend(endpoint *controller.Endpoint) (*pool.ProbeEntry,
 
 // ProbeRandom picks a random backend from the list, probes it, and adds the result
 // to the pool. Errors are silently ignored.
-func (pr *Prober) ProbeRandom(backends []*controller.Endpoint) {
+func (pr *Prober) ProbeRandom(routeKey string, backends []*controller.Endpoint) {
 	if len(backends) == 0 {
 		return
 	}
@@ -118,7 +118,7 @@ func (pr *Prober) ProbeRandom(backends []*controller.Endpoint) {
 	if err != nil {
 		return
 	}
-	pr.pool.Add(entry)
+	pr.pools.Add(routeKey, entry)
 }
 
 func (pr *Prober) runWorker() {
@@ -129,7 +129,7 @@ func (pr *Prober) runWorker() {
 		case routeKey := <-pr.workCh:
 			observability.RecordProbeQueueDepth(len(pr.workCh))
 			backends := pr.ips.Get(routeKey)
-			pr.ProbeRandom(backends)
+			pr.ProbeRandom(routeKey, backends)
 		}
 	}
 }

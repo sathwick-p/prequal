@@ -285,6 +285,44 @@ func TestRouter_RouteRemoval(t *testing.T) {
 	}
 }
 
+func TestRouter_ReplaceIngressRoutes_SwapsRouteSet(t *testing.T) {
+	r := NewRouter()
+
+	r.ReplaceIngressRoutes("default/test-ingress", []RouteSpec{
+		{
+			Host:      "example.com",
+			Path:      "/old",
+			PathType:  string(networkingv1.PathTypePrefix),
+			Key:       "svc-old",
+			Port:      8080,
+			Algorithm: "prequal",
+		},
+	})
+
+	if got := r.Match("example.com", "/old/path"); got == nil || got.Key != "svc-old" {
+		t.Fatalf("expected old route to exist before replacement, got %+v", got)
+	}
+
+	r.ReplaceIngressRoutes("default/test-ingress", []RouteSpec{
+		{
+			Host:      "example.com",
+			Path:      "/new",
+			PathType:  string(networkingv1.PathTypePrefix),
+			Key:       "svc-new",
+			Port:      9090,
+			Algorithm: "prequal",
+		},
+	})
+
+	if got := r.Match("example.com", "/old/path"); got != nil {
+		t.Fatalf("expected old route to be removed after replacement, got %+v", got)
+	}
+
+	if got := r.Match("example.com", "/new/path"); got == nil || got.Key != "svc-new" {
+		t.Fatalf("expected new route to exist after replacement, got %+v", got)
+	}
+}
+
 func TestRouter_RemoveAllRoutesDeletesHost(t *testing.T) {
 	r := NewRouter()
 	mustAddRoute(t, r, "example.com", "/api", pathTypePtr(networkingv1.PathTypePrefix), "svc-api", 8080, "round_robin")

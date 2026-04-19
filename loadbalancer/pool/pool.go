@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"prequal/controller"
-	"prequal/observability"
 	"slices"
 	"sync"
 	"time"
@@ -22,10 +21,10 @@ type ProbeEntry struct {
 // PoolConfig holds the tunables that NewProbePool accepts. It is a subset of
 // loadbalancer.ProbeConfig and lives here to avoid an import cycle.
 type PoolConfig struct {
-	MaxSize    int
-	MaxAge     time.Duration
-	ReuseLimit int
-	QRIF       float64
+	MaxSize     int
+	MaxAge      time.Duration
+	ReuseLimit  int
+	QRIF        float64
 	MaxProbeAge time.Duration
 }
 
@@ -51,12 +50,30 @@ func NewProbePool(cfg PoolConfig) *ProbePool {
 	}
 }
 
-// cleanup removes entries older than maxAge.
-func (pool *ProbePool) cleanup() {
+// cleanupLocked removes entries older than maxAge.
+func (pool *ProbePool) cleanupLocked() {
 	i := 0
 	size := len(pool.entries)
 	for i < size {
 		if time.Since(pool.entries[i].Timestamp) > pool.maxAge {
+			pool.entries[i] = pool.entries[size-1]
+			pool.entries[size-1] = nil
+			size--
+		} else {
+			i++
+		}
+	}
+	pool.entries = pool.entries[:size]
+}
+
+func (pool *ProbePool) purgeStaleLocked() {
+	if pool.maxProbeAge <= 0 {
+		return
+	}
+	i := 0
+	size := len(pool.entries)
+	for i < size {
+		if time.Since(pool.entries[i].Timestamp) > pool.maxProbeAge {
 			pool.entries[i] = pool.entries[size-1]
 			pool.entries[size-1] = nil
 			size--
@@ -101,19 +118,19 @@ func (pool *ProbePool) rifThreshold() int64 {
 }
 
 // Add inserts a new probe entry. Evicts oldest if pool is full.
-func (pool *ProbePool) Add(entry *ProbeEntry) {
+func (pool *ProbePool) Add(entry *ProbeEntry) int {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	pool.cleanup()
-
-	if len(pool.entries) >= pool.maxSize {
+	pool.cleanupLocked()
+	pool.purgeStaleLocked()
+	if pool.maxSize > 0 && len(pool.entries) >= pool.maxSize {
 		pool.removeAt(pool.findOldestIndex())
 	}
 
 	entry.UsesLeft = pool.reuseLimit
 	pool.entries = append(pool.entries, entry)
-	observability.RecordPoolOccupancy(len(pool.entries))
+	return len(pool.entries)
 }
 
 // Size returns current pool occupancy.
@@ -135,6 +152,20 @@ func (pool *ProbePool) IncrementRIF(backend string) {
 	}
 }
 
+// Maintain performs pool cleanup and eviction outside the request hot path.
+func (pool *ProbePool) Maintain() int {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	pool.cleanupLocked()
+	pool.purgeStaleLocked()
+	for pool.maxSize > 0 && len(pool.entries) > pool.maxSize {
+		pool.RemoveWorst()
+	}
+
+	return len(pool.entries)
+}
+
 // RemoveWorst alternates between removing the oldest entry and the highest-load entry.
 func (pool *ProbePool) RemoveWorst() {
 	if len(pool.entries) == 0 {
@@ -142,14 +173,10 @@ func (pool *ProbePool) RemoveWorst() {
 	}
 
 	if pool.removeWorstAlt {
-		// Strategy A: remove oldest
 		pool.removeAt(pool.findOldestIndex())
 	} else {
-		// Strategy B: remove highest-load (reverse HCL)
 		threshold := pool.rifThreshold()
 		worstIndex := -1
-
-		// Check if any entry is hot
 		hasHot := false
 		for _, e := range pool.entries {
 			if e.RIF > threshold {
@@ -159,7 +186,6 @@ func (pool *ProbePool) RemoveWorst() {
 		}
 
 		if hasHot {
-			// Remove the hot entry with highest RIF
 			var highestRIF int64 = -1
 			for i, e := range pool.entries {
 				if e.RIF > threshold && e.RIF > highestRIF {
@@ -168,7 +194,6 @@ func (pool *ProbePool) RemoveWorst() {
 				}
 			}
 		} else {
-			// All cold: remove the cold entry with highest latency
 			var highestLatency time.Duration = -1
 			for i, e := range pool.entries {
 				if e.Latency > highestLatency {
@@ -188,38 +213,13 @@ func (pool *ProbePool) RemoveWorst() {
 
 // Select picks a backend from the pool using the HCL rule.
 // Falls back to a random pick from allBackends if pool is too small.
-func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, error) {
+func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, int, error) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	pool.cleanup()
-	pool.RemoveWorst()
-
-	observability.RecordPoolOccupancy(len(pool.entries))
-
-	// Eagerly purge stale entries whose probe data is older than maxProbeAge.
-	// This keeps occupancy accurate and avoids stale entries consuming pool slots.
-	if pool.maxProbeAge > 0 {
-		i := 0
-		size := len(pool.entries)
-		for i < size {
-			if time.Since(pool.entries[i].Timestamp) > pool.maxProbeAge {
-				pool.entries[i] = pool.entries[size-1]
-				pool.entries[size-1] = nil
-				size--
-			} else {
-				i++
-			}
-		}
-		pool.entries = pool.entries[:size]
-	}
-
-	observability.RecordPoolOccupancy(len(pool.entries))
-
-	// Fallback: pool too small
 	if len(pool.entries) < 2 {
 		if len(allBackends) == 0 {
-			return nil, fmt.Errorf("no backends available")
+			return nil, len(pool.entries), fmt.Errorf("no backends available")
 		}
 		ep := allBackends[rand.Intn(len(allBackends))]
 		return &ProbeEntry{
@@ -228,12 +228,10 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 			RIF:       0,
 			Latency:   0,
 			Timestamp: time.Now(),
-			UsesLeft:  0, // synthetic, not reusable
-		}, nil
+			UsesLeft:  0,
+		}, len(pool.entries), nil
 	}
 
-	// HCL selection over pool.entries entries only.
-	// Compute threshold from pool.entries slice.
 	rifs := make([]int64, len(pool.entries))
 	for i, e := range pool.entries {
 		rifs[i] = e.RIF
@@ -245,39 +243,32 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 	}
 	threshold := rifs[idx]
 
-	// Classify and find best
 	var bestCold *ProbeEntry
-	var bestColdIndex int = -1
+	bestColdIndex := -1
 	var bestHot *ProbeEntry
-	var bestHotIndex int = -1
+	bestHotIndex := -1
 	allHot := true
 
 	for i, e := range pool.entries {
 		if e.RIF <= threshold {
-			// Cold entry
 			allHot = false
 			if bestCold == nil || e.Latency < bestCold.Latency {
 				bestCold = e
 				bestColdIndex = i
 			}
-		} else {
-			// Hot entry
-			if bestHot == nil || e.RIF < bestHot.RIF {
-				bestHot = e
-				bestHotIndex = i
-			}
+			continue
+		}
+		if bestHot == nil || e.RIF < bestHot.RIF {
+			bestHot = e
+			bestHotIndex = i
 		}
 	}
 
-	var selected *ProbeEntry
-	var selectedIndex int
-
+	selected := bestCold
+	selectedIndex := bestColdIndex
 	if allHot {
 		selected = bestHot
 		selectedIndex = bestHotIndex
-	} else {
-		selected = bestCold
-		selectedIndex = bestColdIndex
 	}
 
 	selected.UsesLeft--
@@ -285,5 +276,5 @@ func (pool *ProbePool) Select(allBackends []*controller.Endpoint) (*ProbeEntry, 
 		pool.removeAt(selectedIndex)
 	}
 
-	return selected, nil
+	return selected, len(pool.entries), nil
 }

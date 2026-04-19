@@ -33,17 +33,17 @@ func backendEndpoint(t *testing.T, ts *httptest.Server) *controller.Endpoint {
 func newProxy(router *controller.Router, store *controller.BackendIPStore) *server.ProxyServer {
 	tracker := &loadbalancer.RIFTracker{}
 	latencyTracker := loadbalancer.NewLatencyTracker()
-	probePool := pool.NewProbePool(pool.PoolConfig{
+	pools := pool.NewRoutePools(pool.PoolConfig{
 		MaxSize:     16,
 		MaxAge:      1 * time.Second,
 		ReuseLimit:  3,
 		QRIF:        0.75,
 		MaxProbeAge: 2 * time.Second,
-	})
+	}, 100*time.Millisecond)
 	selectors := map[string]loadbalancer.Selector{}
 	cfg := server.DefaultConfig()
 	cfg.LogRequests = false
-	return server.NewProxyServerWithConfig(router, store, selectors, tracker, latencyTracker, probePool, nil, cfg)
+	return server.NewProxyServerWithConfig(router, store, selectors, tracker, latencyTracker, pools, nil, cfg)
 }
 
 // Test 1: Request forwarded to matched backend

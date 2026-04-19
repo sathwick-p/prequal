@@ -20,16 +20,16 @@ func hostPortFromURL(url string) (host string, port int, err error) {
 	return
 }
 
-func newTestProbePool() *pool.ProbePool {
-	return pool.NewProbePool(pool.PoolConfig{
+func newTestProbePools() *pool.RoutePools {
+	return pool.NewRoutePools(pool.PoolConfig{
 		MaxSize:    10,
 		MaxAge:     time.Hour,
 		ReuseLimit: 5,
 		QRIF:       0.5,
-	})
+	}, time.Second)
 }
 
-func newTestProber(p *pool.ProbePool, probePort int) *Prober {
+func newTestProber(p *pool.RoutePools, probePort int) *Prober {
 	stop := make(chan struct{})
 	ips := controller.NewBackendIPStore()
 	return NewProber(p, ips, ProbeConfig{
@@ -57,7 +57,7 @@ func TestProber_ProbeBackend_Success(t *testing.T) {
 		t.Fatalf("could not parse test server URL: %v", err)
 	}
 
-	pr := newTestProber(newTestProbePool(), port)
+	pr := newTestProber(newTestProbePools(), port)
 	ep := controller.NewEndpoint(host, int32(port))
 
 	entry, err := pr.ProbeBackend(ep)
@@ -84,7 +84,7 @@ func TestProber_ProbeBackend_Non200Status(t *testing.T) {
 		t.Fatalf("could not parse test server URL: %v", err)
 	}
 
-	pr := newTestProber(newTestProbePool(), port)
+	pr := newTestProber(newTestProbePools(), port)
 	ep := controller.NewEndpoint(host, int32(port))
 
 	_, err = pr.ProbeBackend(ep)
@@ -106,7 +106,7 @@ func TestProber_ProbeBackend_MalformedJSON(t *testing.T) {
 		t.Fatalf("could not parse test server URL: %v", err)
 	}
 
-	pr := newTestProber(newTestProbePool(), port)
+	pr := newTestProber(newTestProbePools(), port)
 	ep := controller.NewEndpoint(host, int32(port))
 
 	_, err = pr.ProbeBackend(ep)
@@ -134,7 +134,7 @@ func TestProber_ProbeBackend_ZeroTimestampUsesLocalTime(t *testing.T) {
 	}
 
 	// MaxProbeAge=0 disables staleness check so we can test timestamp fallback.
-	p := pool.NewProbePool(pool.PoolConfig{MaxSize: 10, MaxAge: time.Hour, ReuseLimit: 5, QRIF: 0.5})
+	p := pool.NewRoutePools(pool.PoolConfig{MaxSize: 10, MaxAge: time.Hour, ReuseLimit: 5, QRIF: 0.5}, time.Second)
 	stop := make(chan struct{})
 	ips := controller.NewBackendIPStore()
 	pr := NewProber(p, ips, ProbeConfig{
@@ -177,7 +177,7 @@ func TestProber_TriggerProbes_ReturnsQuickly(t *testing.T) {
 	stop := make(chan struct{})
 	defer close(stop)
 
-	p := newTestProbePool()
+	p := newTestProbePools()
 	pr := NewProber(p, ips, ProbeConfig{
 		ProbePort:          port,
 		ProbeTimeout:       2 * time.Second,

@@ -58,7 +58,7 @@ func TestProbePool_SelectReturnsEntry(t *testing.T) {
 		controller.NewEndpoint("10.0.0.1", 8080),
 		controller.NewEndpoint("10.0.0.2", 8080),
 	}
-	entry, err := p.Select(backends)
+	entry, _, err := p.Select(backends)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestProbePool_SelectFallsBackToRandomWhenPoolSmall(t *testing.T) {
 		controller.NewEndpoint("10.0.0.1", 8080),
 		controller.NewEndpoint("10.0.0.2", 8080),
 	}
-	entry, err := p.Select(backends)
+	entry, _, err := p.Select(backends)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestProbePool_SelectFallsBackToRandomWhenPoolSmall(t *testing.T) {
 
 func TestProbePool_SelectEmptyPoolEmptyBackendsReturnsError(t *testing.T) {
 	p := newTestPool(10, time.Hour, 5, 0.5)
-	_, err := p.Select([]*controller.Endpoint{})
+	_, _, err := p.Select([]*controller.Endpoint{})
 	if err == nil {
 		t.Fatal("expected error when pool empty and no backends")
 	}
@@ -106,7 +106,7 @@ func TestProbePool_HCL_AllCold_SelectsLowestLatency(t *testing.T) {
 	p.Add(e3)
 
 	backends := []*controller.Endpoint{e1.Endpoint, e2.Endpoint, e3.Endpoint}
-	entry, err := p.Select(backends)
+	entry, _, err := p.Select(backends)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestProbePool_HCL_MixedHotCold_SelectsColdEntry(t *testing.T) {
 	p.Add(e3)
 
 	backends := []*controller.Endpoint{e1.Endpoint, e2.Endpoint, e3.Endpoint}
-	entry, err := p.Select(backends)
+	entry, _, err := p.Select(backends)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,14 +231,14 @@ func TestProbePool_UsesLeftDecrementedOnSelect(t *testing.T) {
 	// First select: pool has 2 entries; selects one and removes it (UsesLeft hits 0).
 	// RemoveWorst also fires, potentially removing another entry.
 	// After first select the pool may have 0 entries => fallback on next call.
-	_, err := p.Select(backends)
+	_, _, err := p.Select(backends)
 	if err != nil {
 		t.Fatalf("first select unexpected error: %v", err)
 	}
 
 	// Eventually the pool should drain and fall back to random (still no error).
 	for i := 0; i < 5; i++ {
-		_, err = p.Select(backends)
+		_, _, err = p.Select(backends)
 		if err != nil {
 			// Error only when backends slice is also empty, which it isn't here.
 			t.Fatalf("unexpected error on select %d: %v", i+2, err)

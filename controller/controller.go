@@ -134,21 +134,9 @@ func (c *Controller) onIngressEvent(obj interface{}) {
 	log.Printf("[DEBUG] Added to queue: %s", key)
 }
 
-func (c *Controller) onIngressUpdate(oldObj, newObj interface{}) {
-	oldIngress, ok := oldObj.(*networkingv1.Ingress)
-	if ok {
-		c.router.RemoveRoute(oldIngress)
-		oldKey, err := cache.MetaNamespaceKeyFunc(oldIngress)
-		if err == nil {
-			c.removeIngressFromMapping(oldKey)
-		}
-	}
-
+func (c *Controller) onIngressUpdate(_ interface{}, newObj interface{}) {
 	newIngress, ok := newObj.(*networkingv1.Ingress)
 	if !ok {
-		return
-	}
-	if c.isIngressPrequal(newIngress) == false {
 		return
 	}
 	key, err := cache.MetaNamespaceKeyFunc(newIngress)
@@ -174,38 +162,37 @@ func (c *Controller) isIngressPrequal(ingress *networkingv1.Ingress) bool {
 	return false
 }
 func (c *Controller) handleIngressDeletion(ingress *networkingv1.Ingress) {
-	if c.isIngressPrequal(ingress) == false {
-		return
-	}
 	ingressKey := fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name)
 	log.Printf("[DELETE] Ingress %s deleted, cleaning up\n", ingressKey)
-	c.router.RemoveRoute(ingress)
-	c.removeIngressFromMapping(ingressKey)
-
+	c.cleanupIngress(ingressKey)
 }
 func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 	reconcileStart := time.Now()
 
-	algo := ingress.Annotations["lb/algo"]
-	if c.isIngressPrequal(ingress) == false {
+	if !c.isIngressPrequal(ingress) {
 		log.Printf("[SKIP] Ingress %s/%s: not our class \n", ingress.Namespace, ingress.Name)
+		c.cleanupIngress(fmt.Sprintf("%s/%s", ingress.Namespace, ingress.Name))
 		return
 	}
 
 	log.Printf("[EVENT] Ingress %s/%s triggered\n", ingress.Namespace, ingress.Name)
 	namespace := ingress.Namespace
-	syncedKeys := make(map[string]bool)
-	var serviceName string
+	ingressKey := fmt.Sprintf("%s/%s", namespace, ingress.Name)
+	algo := ingress.Annotations["lb/algo"]
+	syncedRoutes := make(map[string]endpointSyncSpec)
+	serviceKeys := make(map[string]struct{})
+	routeSpecs := make([]RouteSpec, 0)
+
 	for _, rule := range ingress.Spec.Rules {
 		if rule.HTTP == nil {
 			continue
 		}
 		ruleHost := rule.Host
 		for _, path := range rule.HTTP.Paths {
-			serviceName = ""
+			serviceName := ""
 			svc := path.Backend.Service
 			pathType := path.PathType
-			path := path.Path
+			pathValue := path.Path
 			var portNumber int32
 			var portName string
 			if svc != nil {
@@ -221,34 +208,39 @@ func (c *Controller) syncIngress(ingress *networkingv1.Ingress) {
 				continue
 			}
 			serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
+			serviceKeys[serviceKey] = struct{}{}
 			routeKey := serviceKey
 			if portNumber != 0 {
 				routeKey = fmt.Sprintf("%s:%d", serviceKey, portNumber)
 			} else if portName != "" {
 				routeKey = fmt.Sprintf("%s:%s", serviceKey, portName)
 			}
-			ingressKey := fmt.Sprintf("%s/%s", namespace, ingress.Name)
-			c.syncMux.Lock()
-			// Check if this ingress is already in the list
-			found := false
-			for _, k := range c.serviceToIngress[serviceKey] {
-				if k == ingressKey {
-					found = true
-					break
-				}
-			}
-			if !found {
-				c.serviceToIngress[serviceKey] = append(c.serviceToIngress[serviceKey], ingressKey)
-			}
-			c.syncMux.Unlock()
 			log.Printf("[INGRESS] %s/%s -> service: %s\n", ingress.Namespace, ingress.Name, serviceName)
 			log.Printf("[INGRESS] host: %s\n", ruleHost)
-			c.router.AddRoute(ruleHost, path, pathType, routeKey, portNumber, algo)
-			if !syncedKeys[routeKey] {
-				syncedKeys[routeKey] = true
-				c.syncServiceEndpoints(namespace, serviceName, routeKey, portNumber, portName)
+			routeSpecs = append(routeSpecs, RouteSpec{
+				Host:      ruleHost,
+				Path:      pathValue,
+				PathType:  pathTypeString(pathType),
+				Key:       routeKey,
+				Port:      portNumber,
+				Algorithm: algo,
+			})
+			if _, exists := syncedRoutes[routeKey]; !exists {
+				syncedRoutes[routeKey] = endpointSyncSpec{
+					namespace:   namespace,
+					serviceName: serviceName,
+					routeKey:    routeKey,
+					portNumber:  portNumber,
+					portName:    portName,
+				}
 			}
 		}
+	}
+
+	c.router.ReplaceIngressRoutes(ingressKey, routeSpecs)
+	c.replaceIngressMappings(ingressKey, serviceKeys)
+	for _, syncSpec := range syncedRoutes {
+		c.syncServiceEndpoints(syncSpec.namespace, syncSpec.serviceName, syncSpec.routeKey, syncSpec.portNumber, syncSpec.portName)
 	}
 	observability.RecordReconciliation("success", time.Since(reconcileStart))
 }
@@ -408,13 +400,22 @@ func (c *Controller) syncKey(key string) error {
 	// endpointSlice, err := c.discoveryLister.EndpointSlices(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			c.removeIngressFromMapping(key)
+			c.cleanupIngress(key)
 			return nil
 		}
 		return err
 	}
+	if !c.isIngressPrequal(ingress) {
+		c.cleanupIngress(key)
+		return nil
+	}
 	c.syncIngress(ingress)
 	return nil
+}
+
+func (c *Controller) cleanupIngress(ingressKey string) {
+	c.router.DeleteIngressRoutes(ingressKey)
+	c.removeIngressFromMapping(ingressKey)
 }
 
 func (c *Controller) removeIngressFromMapping(ingressKey string) {
@@ -434,6 +435,37 @@ func (c *Controller) removeIngressFromMapping(ingressKey string) {
 		}
 	}
 	log.Printf("[CLEANUP] Removed ingress %s from service mappings\n", ingressKey)
+}
+
+func (c *Controller) replaceIngressMappings(ingressKey string, serviceKeys map[string]struct{}) {
+	c.syncMux.Lock()
+	defer c.syncMux.Unlock()
+
+	for svcKey, ingressKeys := range c.serviceToIngress {
+		filtered := make([]string, 0, len(ingressKeys))
+		for _, existing := range ingressKeys {
+			if existing != ingressKey {
+				filtered = append(filtered, existing)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(c.serviceToIngress, svcKey)
+		} else {
+			c.serviceToIngress[svcKey] = filtered
+		}
+	}
+
+	for svcKey := range serviceKeys {
+		c.serviceToIngress[svcKey] = append(c.serviceToIngress[svcKey], ingressKey)
+	}
+}
+
+type endpointSyncSpec struct {
+	namespace   string
+	serviceName string
+	routeKey    string
+	portNumber  int32
+	portName    string
 }
 
 func (c *Controller) GetRouterSnapshot() map[string]*HostConfig {
