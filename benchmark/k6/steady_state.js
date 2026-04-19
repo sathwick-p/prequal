@@ -10,6 +10,7 @@ const iterations = Number(__ENV.WORK_ITERATIONS || '1000');
 export const options = {
   vus,
   duration,
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
     http_req_failed: ['rate<0.01'],
     http_req_duration: ['p(95)<1000'],

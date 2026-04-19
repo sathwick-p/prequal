@@ -30,6 +30,7 @@ export const options = {
       maxVUs,
     },
   },
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
     // Relaxed — want to observe degradation, not gate on it.
     http_req_failed: ['rate<0.05'],

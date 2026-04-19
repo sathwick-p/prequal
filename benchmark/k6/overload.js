@@ -25,6 +25,7 @@ export const options = {
       maxVUs,
     },
   },
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
     // No http_req_failed threshold: overload deliberately expects high error rates.
     // Iterations threshold is a no-op sentinel to keep the thresholds block non-empty.
