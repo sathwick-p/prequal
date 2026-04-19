@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-04-19T09-12-01Z-uniform-smoke-least-connections",
+  "date_utc": "2026-04-19T09:12:01Z",
+  "git_sha": "38e9dacad6d1200bfb18fac790839340201c76df",
+  "environment": "kind-local",
+  "scenario": "uniform-smoke",
+  "algorithm": "least-connections",
+  "duration_seconds": 60,
+  "target_rate_rps": 0,
+  "workload_manifest": "benchmark/manifests/workload-uniform.yaml",
+  "load_script": "benchmark/k6/steady_state.js",
+  "controller_env": {},
+  "backend_env": {},
+  "notes": "rep 1/3, kind-local, 31080 NodePort"
+}

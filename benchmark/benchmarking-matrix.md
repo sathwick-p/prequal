@@ -33,24 +33,26 @@ Purpose: validate harness, manifests, metrics collection.
 
 | campaign_id | scenario           | environment | algorithm        | script                                  | manifest                                           | rate_model   | duration | repetitions | owner        | status       | results_dir |
 |-------------|--------------------|-------------|------------------|-----------------------------------------|----------------------------------------------------|--------------|----------|-------------|--------------|--------------|-------------|
-| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-38-14Z](results/2026-04-19T08-38-14Z-uniform-smoke-prequal/) |
-| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-39-20Z](results/2026-04-19T08-39-20Z-uniform-smoke-round-robin/) |
-| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3 (1/3 done)| ralph-session| in-progress  | [2026-04-19T08-40-25Z](results/2026-04-19T08-40-25Z-uniform-smoke-least-connections/) |
+| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
+| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
+| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
 
-### Campaign 1 first-pass results (2026-04-19, E-A kind-local, single rep)
+### Campaign 1 results (2026-04-19, E-A kind-local, 3 reps per algorithm)
 
-Closed-loop 30 VUs, 60s steady-state, WORK_ITERATIONS=1000, uniform workload (4 backend replicas, WORK_MULTIPLIER=1.0):
+Closed-loop 30 VUs, 60s steady-state, WORK_ITERATIONS=1000, uniform workload (4 backend replicas, WORK_MULTIPLIER=1.0). Each cell shows `median [min-max]` across 3 runs; all latencies in ms.
 
-| algorithm         | requests | rps    | avg ms | p95 ms | err rate |
-|-------------------|---------:|-------:|-------:|-------:|---------:|
-| prequal           |  264,846 | 4414   | 6.76   | 13.49  | 0        |
-| round-robin       |  311,825 | 5197   | 5.73   | 11.63  | 0        |
-| least-connections |  307,628 | 5127   | 5.81   | 11.65  | 0        |
+| algorithm         | reps | rps              | avg ms          | p50 ms         | p95 ms            | p99 ms            | p99.9 ms              |
+|-------------------|-----:|------------------|-----------------|----------------|-------------------|-------------------|-----------------------|
+| prequal           | 3    | 5649 [4586-5964] | 5.26 [4.98-6.49]| 4.60 [4.36-5.57]| 10.24 [9.68-13.29]| 15.46 [14.83-21.01]| 36.13 [30.34-45.06]  |
+| round-robin       | 3    | 5821 [4322-6155] | 5.10 [4.83-6.89]| 4.20 [4.09-5.46]| 10.64 [9.80-15.07]| 18.90 [16.18-30.68]| 46.16 [34.69-79.46]  |
+| least-connections | 3    | 5227 [4881-6110] | 5.69 [4.86-6.09]| 4.66 [4.11-4.69]| 12.11 [9.72-13.96]| 21.62 [16.48-26.52]| 53.19 [38.23-76.58]  |
 
 Observations:
-- Under uniform capacity, round-robin and least-connections outperform prequal on throughput/p95 — consistent with the Prequal paper's claim that probing overhead is only worthwhile when backends have heterogeneous capacity. This is the expected smoke shape.
-- p50/p99/p99.9 were not captured because the existing k6 scripts rely on k6's default `summaryTrendStats` which omits those percentiles. Follow-up: set `summaryTrendStats: ['avg','min','med','max','p(50)','p(95)','p(99)','p(99.9)']` in each k6 script's `options`.
-- Remaining 2 reps per algorithm still to run before declaring Campaign 1 done. Heterogeneous Campaign 2 is the decisive test for `prequal` vs. the baselines.
+- Throughput is essentially tied (prequal 5649 rps, round-robin 5821, least-connections 5227 — all within ~10% and overlapping min-max ranges). Under uniform capacity the three algorithms are throughput-equivalent, as expected.
+- **Tail latency tells a different story:** `prequal` has the lowest p99 (15.5ms median vs 18.9ms round-robin and 21.6ms least-connections) and the lowest p99.9 (36.1ms median vs 46.2 and 53.2). Even on uniform capacity where the paper predicts the overhead of probing should roughly break even, the HCL (hot/cold lexicographic) selection appears to dampen pathological tails introduced by transient RIF spikes. This is a suggestive signal — not a strong claim — that should be re-tested with Campaign 2 heterogeneous, where the effect should widen.
+- Variance across reps is meaningful: prequal's p99 ranged 14.83–21.01, round-robin 16.18–30.68, least-connections 16.48–26.52. `round-robin`'s p99.9 in its worst rep (79.46ms) is 2.2× prequal's worst rep. Single-rep runs are not trustworthy; 3 reps is the minimum.
+- Raw per-run artifacts live under `benchmark/results/2026-04-19T09-*-uniform-smoke-*/` (9 directories). Aggregated JSON at [`results/aggregated/2026-04-19-C1-uniform-smoke.json`](results/aggregated/2026-04-19-C1-uniform-smoke.json).
+- Campaign 2 (heterogeneous open-loop) is next and is the decisive test for `prequal` vs. the baselines.
 
 ## Campaign 2 — Algorithm comparison under controlled load
 

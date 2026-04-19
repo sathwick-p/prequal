@@ -1,0 +1,108 @@
+{
+  "campaign": "C1-uniform-smoke",
+  "date_utc": "2026-04-19",
+  "environment": "kind-local",
+  "workload": "benchmark/manifests/workload-uniform.yaml",
+  "script": "benchmark/k6/steady_state.js",
+  "vus": 30,
+  "duration_s": 60,
+  "reps": 3,
+  "runs": {
+    "prequal": [
+      {
+        "dir": "benchmark/results/2026-04-19T09-05-14Z-uniform-smoke-prequal",
+        "rps": 4586.077922141991,
+        "count": 275169,
+        "avg": 6.4946599289891065,
+        "p50": 5.574,
+        "p95": 13.285599999999988,
+        "p99": 21.00632,
+        "p999": 45.06146400000082
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-06-21Z-uniform-smoke-prequal",
+        "rps": 5648.897337446214,
+        "count": 338962,
+        "avg": 5.259436945734403,
+        "p50": 4.597,
+        "p95": 10.244,
+        "p99": 15.456,
+        "p999": 36.12646800000044
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-07-27Z-uniform-smoke-prequal",
+        "rps": 5963.878649156112,
+        "count": 357855,
+        "avg": 4.980181095695194,
+        "p50": 4.36,
+        "p95": 9.675,
+        "p99": 14.832,
+        "p999": 30.341008000001892
+      }
+    ],
+    "round-robin": [
+      {
+        "dir": "benchmark/results/2026-04-19T09-08-38Z-uniform-smoke-round-robin",
+        "rps": 5820.6723602947895,
+        "count": 349302,
+        "avg": 5.103600869734436,
+        "p50": 4.203,
+        "p95": 10.644949999999984,
+        "p99": 18.896959999999986,
+        "p999": 46.15975600000169
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-09-44Z-uniform-smoke-round-robin",
+        "rps": 4322.259316326495,
+        "count": 259347,
+        "avg": 6.891391868808958,
+        "p50": 5.463,
+        "p95": 15.069699999999989,
+        "p99": 30.679159999999992,
+        "p999": 79.45608000000057
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-10-51Z-uniform-smoke-round-robin",
+        "rps": 6155.442684016315,
+        "count": 369370,
+        "avg": 4.827477835233022,
+        "p50": 4.092,
+        "p95": 9.801,
+        "p99": 16.182309999999994,
+        "p999": 34.69126200000008
+      }
+    ],
+    "least-connections": [
+      {
+        "dir": "benchmark/results/2026-04-19T09-12-01Z-uniform-smoke-least-connections",
+        "rps": 6109.516322374955,
+        "count": 366594,
+        "avg": 4.8595129816634515,
+        "p50": 4.113,
+        "p95": 9.717,
+        "p99": 16.480139999999995,
+        "p999": 38.23466300000037
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-13-08Z-uniform-smoke-least-connections",
+        "rps": 4880.571561222838,
+        "count": 292889,
+        "avg": 6.0909943084239515,
+        "p50": 4.688,
+        "p95": 13.963,
+        "p99": 26.520599999999988,
+        "p999": 76.58400000000402
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-14-15Z-uniform-smoke-least-connections",
+        "rps": 5227.086309019581,
+        "count": 313648,
+        "avg": 5.686940672346123,
+        "p50": 4.657,
+        "p95": 12.112649999999986,
+        "p99": 21.624,
+        "p999": 53.19212100000197
+      }
+    ]
+  }
+}
