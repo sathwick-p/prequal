@@ -6,6 +6,11 @@ This directory contains reproducible benchmark assets for the ingress proxy:
 - workload manifests for uniform, heterogeneous, and multi-route tests
 - `k6` scripts for closed-loop and open-loop traffic
 - a churn helper script for control-plane stability tests
+- a local Prometheus + Grafana observability stack
+- a campaign runner, result collector, archiver, and report templates
+
+The full campaign plan (scenarios × algorithms × environments) is tracked in
+[`benchmark/benchmarking-matrix.md`](benchmarking-matrix.md).
 
 ## Manifests
 
