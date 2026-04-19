@@ -1,0 +1,411 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-1
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-1
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-1
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-2
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-2
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-2
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-3
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-3
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-3
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-4
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-4
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-4
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-5
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-5
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-5
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-6
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-6
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-6
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-7
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-7
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-7
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-route-scale-8
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-route-scale-8
+  template:
+    metadata:
+      labels:
+        app: bench-route-scale-8
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-1
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-1
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-2
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-2
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-3
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-3
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-4
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-4
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-5
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-5
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-6
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-6
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-7
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-7
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-route-scale-8
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-route-scale-8
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bench-route-scale
+  namespace: prequal-benchmark
+  labels:
+    ingress.class: prequal
+  annotations:
+    lb/algo: prequal
+spec:
+  rules:
+  - host: route-scale-1.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-1
+            port:
+              number: 8080
+  - host: route-scale-2.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-2
+            port:
+              number: 8080
+  - host: route-scale-3.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-3
+            port:
+              number: 8080
+  - host: route-scale-4.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-4
+            port:
+              number: 8080
+  - host: route-scale-5.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-5
+            port:
+              number: 8080
+  - host: route-scale-6.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-6
+            port:
+              number: 8080
+  - host: route-scale-7.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-7
+            port:
+              number: 8080
+  - host: route-scale-8.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-route-scale-8
+            port:
+              number: 8080

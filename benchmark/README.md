@@ -191,3 +191,36 @@ k6 run \
 - Prefer `benchmark/k6/open_loop.js` for saturation and tail-latency work.
 - Use `benchmark/k6/steady_state.js` only for fast smoke checks.
 - Run `benchmark/scripts/churn.sh` during traffic to evaluate reconciliation stability.
+
+## Additional manifests
+
+### Workload manifests
+
+- `benchmark/manifests/workload-route-scale.yaml` — 8 independent routes (`route-scale-1..8.bench.local`), 2 replicas each, for validating per-route balancing state isolation at scale. Pair with `benchmark/k6/multi_route.js` (set `ROUTE_SCALE_HOSTS` to the 8 hosts) or a `rate_ramp.js` config that cycles through all 8 hosts.
+- `benchmark/manifests/workload-long-duration.yaml` — 6-replica stable deployment on `long.bench.local` with conservative resource limits (cpu 50m–500m, memory 64Mi–256Mi) for 1h+ soak runs. Pair with `benchmark/k6/long_duration.js`.
+
+### Fault-injection manifests
+
+> **These four manifests require a fault-injection-aware backend image that does not yet exist.**
+> `prequal-backend:latest` does NOT implement `FAULT_PROBE_MODE`. The manifests define the deployment shape, ingress wiring, and env var contract so they are ready when a fault backend is built. See [benchmark/evidence-asset-spec.md section 10](evidence-asset-spec.md) for the full dependency description.
+
+- `benchmark/manifests/fault-probe-timeout.yaml` — `FAULT_PROBE_MODE=timeout`; host `fault-timeout.bench.local`. Pair with `benchmark/k6/open_loop.js`.
+- `benchmark/manifests/fault-probe-500.yaml` — `FAULT_PROBE_MODE=500` (probe returns HTTP 500); host `fault-500.bench.local`. Pair with `benchmark/k6/open_loop.js`.
+- `benchmark/manifests/fault-probe-malformed.yaml` — `FAULT_PROBE_MODE=malformed` (probe returns malformed body); host `fault-malformed.bench.local`. Pair with `benchmark/k6/open_loop.js`.
+- `benchmark/manifests/fault-probe-stale-timestamp.yaml` — `FAULT_PROBE_MODE=stale_timestamp` (probe returns stale timestamp); host `fault-stale.bench.local`. Pair with `benchmark/k6/open_loop.js`.
+
+### Apply commands
+
+```bash
+# Route-scale workload
+kubectl apply -f benchmark/manifests/workload-route-scale.yaml
+
+# Long-duration soak workload
+kubectl apply -f benchmark/manifests/workload-long-duration.yaml
+
+# Fault-injection manifests (requires fault-injection backend image — see evidence-asset-spec.md §10)
+kubectl apply -f benchmark/manifests/fault-probe-timeout.yaml
+kubectl apply -f benchmark/manifests/fault-probe-500.yaml
+kubectl apply -f benchmark/manifests/fault-probe-malformed.yaml
+kubectl apply -f benchmark/manifests/fault-probe-stale-timestamp.yaml
+```

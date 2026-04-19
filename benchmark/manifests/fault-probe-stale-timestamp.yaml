@@ -1,0 +1,70 @@
+# IMPORTANT: This manifest depends on a fault-injection-aware backend image.
+# The default prequal-backend:latest image does NOT implement FAULT_PROBE_MODE.
+# This manifest defines the deployment shape, ingress wiring, and env var contract
+# for when a fault-injection backend exists, or for any engineer who builds a custom
+# image that implements FAULT_PROBE_MODE=stale_timestamp behavior (probe returns
+# a stale/far-past timestamp, exercising staleness detection in the controller).
+# See benchmark/evidence-asset-spec.md section 10 for details.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-fault-stale
+  namespace: prequal-benchmark
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bench-fault-stale
+  template:
+    metadata:
+      labels:
+        app: bench-fault-stale
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+        - name: FAULT_PROBE_MODE
+          value: "stale_timestamp"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-fault-stale
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app: bench-fault-stale
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bench-fault-stale
+  namespace: prequal-benchmark
+  labels:
+    ingress.class: prequal
+  annotations:
+    lb/algo: prequal
+spec:
+  rules:
+  - host: fault-stale.bench.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-fault-stale
+            port:
+              number: 8080
