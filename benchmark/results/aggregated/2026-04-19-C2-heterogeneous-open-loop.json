@@ -1,0 +1,117 @@
+{
+  "campaign": "C2-heterogeneous-open-loop",
+  "date_utc": "2026-04-19",
+  "environment": "kind-local",
+  "workload": "benchmark/manifests/workload-heterogeneous.yaml",
+  "script": "benchmark/k6/open_loop.js",
+  "target_rate_rps": 500,
+  "duration_s": 300,
+  "reps": 3,
+  "runs": {
+    "prequal": [
+      {
+        "dir": "benchmark/results/2026-04-19T09-30-44Z-heterogeneous-open-loop-prequal",
+        "rps": 498.1376469033246,
+        "count": 149448,
+        "avg": 14.13173816979821,
+        "p50": 1.19,
+        "p95": 17.159599999999973,
+        "p99": 327.7227099999997,
+        "p999": 1821.8781170000063,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-35-51Z-heterogeneous-open-loop-prequal",
+        "rps": 491.0483533427692,
+        "count": 147561,
+        "avg": 41.71382487920278,
+        "p50": 1.802,
+        "p95": 126.369,
+        "p99": 854.2995999999999,
+        "p999": 3279.8784000000114,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-40-59Z-heterogeneous-open-loop-prequal",
+        "rps": 496.4973323355765,
+        "count": 148951,
+        "avg": 40.14621203617206,
+        "p50": 2.377,
+        "p95": 196.59799999999987,
+        "p99": 854.2565,
+        "p999": 1566.9681000000012,
+        "err_rate": 0
+      }
+    ],
+    "round-robin": [
+      {
+        "dir": "benchmark/results/2026-04-19T09-46-11Z-heterogeneous-open-loop-round-robin",
+        "rps": 495.77538440133674,
+        "count": 148735,
+        "avg": 36.46406260799388,
+        "p50": 2.144,
+        "p95": 171.48119999999977,
+        "p99": 668.7986399999999,
+        "p999": 2600.028050000007,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-51-17Z-heterogeneous-open-loop-round-robin",
+        "rps": 498.7623590841919,
+        "count": 149629,
+        "avg": 15.320068295584253,
+        "p50": 1.952,
+        "p95": 51.678599999999996,
+        "p99": 284.0377999999999,
+        "p999": 1074.5491000000318,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T09-56-25Z-heterogeneous-open-loop-round-robin",
+        "rps": 498.07769343358467,
+        "count": 149425,
+        "avg": 17.899192932909973,
+        "p50": 1.95,
+        "p95": 57.97679999999983,
+        "p99": 277.78327999999993,
+        "p999": 1801.8226320000244,
+        "err_rate": 0
+      }
+    ],
+    "least-connections": [
+      {
+        "dir": "benchmark/results/2026-04-19T10-01-37Z-heterogeneous-open-loop-least-connections",
+        "rps": 499.3813249510941,
+        "count": 149816,
+        "avg": 8.921061375287167,
+        "p50": 1.568,
+        "p95": 34.45524999999997,
+        "p99": 165.02709999999976,
+        "p999": 561.5011450000135,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T10-06-43Z-heterogeneous-open-loop-least-connections",
+        "rps": 499.2898984777206,
+        "count": 149787,
+        "avg": 7.730704119850047,
+        "p50": 1.568,
+        "p95": 25.240399999999987,
+        "p99": 147.1132399999998,
+        "p999": 528.443466000002,
+        "err_rate": 0
+      },
+      {
+        "dir": "benchmark/results/2026-04-19T10-11-49Z-heterogeneous-open-loop-least-connections",
+        "rps": 497.6879715749195,
+        "count": 149308,
+        "avg": 23.923639557156953,
+        "p50": 1.846,
+        "p95": 94.55134999999989,
+        "p99": 474.04049999999967,
+        "p999": 1977.8729570000007,
+        "err_rate": 0
+      }
+    ]
+  }
+}

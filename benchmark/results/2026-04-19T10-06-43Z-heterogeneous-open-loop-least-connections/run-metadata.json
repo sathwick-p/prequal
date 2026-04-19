@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-04-19T10-06-43Z-heterogeneous-open-loop-least-connections",
+  "date_utc": "2026-04-19T10:06:43Z",
+  "git_sha": "62debb136989b9ad4ee5113c82cbb5a8e84e9947",
+  "environment": "kind-local",
+  "scenario": "heterogeneous-open-loop",
+  "algorithm": "least-connections",
+  "duration_seconds": 300,
+  "target_rate_rps": 500,
+  "workload_manifest": "benchmark/manifests/workload-heterogeneous.yaml",
+  "load_script": "benchmark/k6/open_loop.js",
+  "controller_env": {},
+  "backend_env": {},
+  "notes": "rep 2/3, kind-local, C2 heterogeneous 500rps 300s, clean Prom scrape"
+}

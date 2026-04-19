@@ -63,9 +63,37 @@ Purpose: main comparison set (uniform + heterogeneous, open-loop).
 | C2-uni-pq      | uniform-open-loop        | E-B         | prequal          | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-uniform.yaml`              | open-500   | 300s     | 5           | unassigned | planned |             |
 | C2-uni-rr      | uniform-open-loop        | E-B         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-uniform.yaml`              | open-500   | 300s     | 5           | unassigned | planned |             |
 | C2-uni-lc      | uniform-open-loop        | E-B         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-uniform.yaml`              | open-500   | 300s     | 5           | unassigned | planned |             |
-| C2-het-pq      | heterogeneous-open-loop  | E-B         | prequal          | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | unassigned | planned |             |
-| C2-het-rr      | heterogeneous-open-loop  | E-B         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | unassigned | planned |             |
-| C2-het-lc      | heterogeneous-open-loop  | E-B         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | unassigned | planned |             |
+| C2-het-pq      | heterogeneous-open-loop  | E-A         | prequal          | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 3           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-heterogeneous-open-loop.json) |
+| C2-het-rr      | heterogeneous-open-loop  | E-A         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 3           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-heterogeneous-open-loop.json) |
+| C2-het-lc      | heterogeneous-open-loop  | E-A         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 3           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-heterogeneous-open-loop.json) |
+
+### Campaign 2 heterogeneous-open-loop results (2026-04-19, E-A kind-local, 3 reps per algorithm)
+
+Open-loop constant-arrival-rate, 500 rps, 300s per run, WORK_ITERATIONS=1000. Backend topology: 3 fast replicas (`WORK_MULTIPLIER=1.0`) + 1 slow replica (`WORK_MULTIPLIER=4.0`) behind a single service. Each cell shows `median [min-max]` across 3 runs; all latencies in ms.
+
+| algorithm         | reps | rps           | avg ms             | p50 ms          | p95 ms                | p99 ms                 | p99.9 ms                   | err rate |
+|-------------------|-----:|---------------|--------------------|-----------------|-----------------------|------------------------|----------------------------|---------:|
+| prequal           | 3    | 496 [491-498] | 40.15 [14.13-41.71]| 1.80 [1.19-2.38]| **126.37 [17.16-196.60]** | **854.26 [327.72-854.30]** | **1821.88 [1566.97-3279.88]** | 0        |
+| round-robin       | 3    | 498 [496-499] | 17.90 [15.32-36.46]| 1.95 [1.95-2.14]| 57.98 [51.68-171.48]  | 284.04 [277.78-668.80] | 1801.82 [1074.55-2600.03]  | 0        |
+| least-connections | 3    | 499 [498-499] | 8.92 [7.73-23.92]  | 1.57 [1.57-1.85]| **34.46 [25.24-94.55]**   | **165.03 [147.11-474.04]** | **561.50 [528.44-1977.87]**   | 0        |
+
+Screenshots (full 47-minute campaign window across all three algorithm phases): [`results/screenshots/2026-04-19-C2-heterogeneous/`](results/screenshots/2026-04-19-C2-heterogeneous/)
+
+**Finding — this is the opposite of the Prequal paper's prediction.**
+
+Under the tested configuration, `least-connections` beats `round-robin` beats `prequal` on every tail-latency percentile. Throughput is effectively tied (~500 rps, matching the target arrival rate). The request-overview screenshot makes the effect visually obvious: prequal's 15-min window (09:30–09:45) shows p95 spikes past 500 ms, round-robin's (09:45–10:00) shows spikes to ~300 ms, and least-connections' (10:00–10:15) is mostly flat under 50 ms.
+
+This does not invalidate the Prequal algorithm; it is an honest observation that our current implementation + configuration defaults do not reproduce the paper's result on this workload. Candidate explanations, in rough order of likelihood:
+
+1. **QRIF too lax.** `QRIF=0.75` lets HCL treat the slow replica as "cold" as long as its RIF is in the lower 75% of the pool. With only 4 backends and aggressive probing, the slow replica can appear cold for long stretches, get selected, and then pile up requests.
+2. **RIF-conditioned latency bucket hides the slow replica.** The Rust backend reports `latency_median_ms` from the bucket matching current RIF. A fresh probe to the slow replica at low RIF returns a low latency — the probe tells the controller "this backend is fast" until the slow replica accumulates a queue. By the time the probe reveals the truth, many requests are already dispatched.
+3. **Pool reuse window.** `PoolReuseLimit=3` with `MaxProbeAge=2s` lets a single slow-replica probe be reused up to 3 times across 2 seconds, amplifying (2).
+4. **Probes-per-query rate vs observation window.** `ProbesPerQuery=1.0` + `BackgroundInterval=100ms` may be under-sampling the fast backends relative to the slow one, especially when selection itself skews toward the slow one.
+5. **Small-pool edge.** `PoolMaxSize=16` with only 4 backends and probe reuse gives at most ~4 entries per unique backend. HCL picks the lowest-latency entry among a small set; variance is high.
+
+Next step is a narrow parameter sweep on C2-het-pq only — vary `QRIF ∈ {0.5, 0.75, 0.9}`, `MaxProbeAge ∈ {500ms, 2s}`, `PoolReuseLimit ∈ {1, 3}` — and see which combination (if any) closes the gap. If none does, the likely culprit is the backend's RIF-bucketed `latency_median_ms` semantics, which would be an algorithm-fidelity issue, not a tuning one.
+
+Until the investigation completes, downstream campaigns (C3 ramp, C4 multi-route isolation, C5 long-duration, C6 overload, C7 churn) should treat "prequal" as running under its current, underperforming default configuration. Those campaigns still produce useful evidence — they test stability and ingress behavior, not just the algorithm comparison.
 
 ## Campaign 3 — Saturation and tail-latency ramp
 

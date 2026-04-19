@@ -1,0 +1,5 @@
+===== bench-fast =====
+Found 3 pods, using pod/bench-fast-5f785fb9cd-tpc5b
+prequal-backend listening on 0.0.0.0:8080 fault_mode=None fault_timeout_ms=300000 fault_stale_offset_ms=10000
+===== bench-slow =====
+prequal-backend listening on 0.0.0.0:8080 fault_mode=None fault_timeout_ms=300000 fault_stale_offset_ms=10000
