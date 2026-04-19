@@ -576,7 +576,12 @@ Campaign report sections:
 - `FAULT_PROBE_MODE=malformed` — probe returns a non-JSON body, exercising the controller's parse-error path
 - `FAULT_PROBE_MODE=stale_timestamp` — probe returns a valid JSON body with a timestamp offset into the past by `FAULT_STALE_OFFSET_MS` milliseconds (default 60000), exercising staleness detection
 
-The `/work` endpoint is unaffected in all modes.
+The `/work` endpoint is unaffected in all fault modes.
+
+### Work-endpoint env vars
+
+- `IO_BOUND_MODE=1` (or `true`) — switches `/work` from the CPU-bound SHA256 loop to a `tokio::time::sleep`; default `false`
+- `IO_BOUND_BASE_US=<us>` — microseconds of sleep per unit of `iterations` when `IO_BOUND_MODE` is active; default `50` (so `iterations=1000` → 50 ms sleep, realistic for a downstream service call)
 
 Rebuild the backend image before applying fault manifests:
 

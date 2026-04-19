@@ -51,6 +51,8 @@ struct AppState {
     fault_mode: FaultProbeMode,
     fault_timeout_ms: u64,
     fault_stale_offset_ms: u64,
+    io_bound_mode: bool,
+    io_bound_base_us: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -117,14 +119,22 @@ async fn work_handler(
 
     let iterations = ((payload.iterations.unwrap_or(1000) as f64) * state.work_multiplier) as u64;
 
-    let mut hash = vec![0u8; 32];
-    for _ in 0..iterations {
-        let mut hasher = Sha256::new();
-        hasher.update(&hash);
-        hash = hasher.finalize().to_vec();
-    }
-
-    let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let (result, duration_ms) = if state.io_bound_mode {
+        let sleep_us = iterations * state.io_bound_base_us;
+        tokio::time::sleep(tokio::time::Duration::from_micros(sleep_us)).await;
+        let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+        ("io_bound".to_string(), duration_ms)
+    } else {
+        let mut hash = vec![0u8; 32];
+        for _ in 0..iterations {
+            let mut hasher = Sha256::new();
+            hasher.update(&hash);
+            hash = hasher.finalize().to_vec();
+        }
+        let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let result: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+        (result, duration_ms)
+    };
 
     {
         let bucket_idx = rif_bucket(arrival_rif);
@@ -136,8 +146,6 @@ async fn work_handler(
     }
 
     state.rif.fetch_sub(1, Ordering::Relaxed);
-
-    let result: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
 
     Json(WorkResponse {
         result,
@@ -245,6 +253,16 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(10000);
 
+    let io_bound_mode: bool = matches!(
+        std::env::var("IO_BOUND_MODE").unwrap_or_default().as_str(),
+        "1" | "true"
+    );
+
+    let io_bound_base_us: u64 = std::env::var("IO_BOUND_BASE_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+
     let latency_buckets = (0..NUM_BUCKETS)
         .map(|_| Mutex::new(VecDeque::new()))
         .collect();
@@ -257,11 +275,13 @@ async fn main() {
         fault_mode,
         fault_timeout_ms,
         fault_stale_offset_ms,
+        io_bound_mode,
+        io_bound_base_us,
     });
 
     println!(
-        "prequal-backend listening on 0.0.0.0:{} fault_mode={:?} fault_timeout_ms={} fault_stale_offset_ms={}",
-        port, fault_mode, fault_timeout_ms, fault_stale_offset_ms
+        "prequal-backend listening on 0.0.0.0:{} fault_mode={:?} fault_timeout_ms={} fault_stale_offset_ms={} io_bound_mode={} io_bound_base_us={}",
+        port, fault_mode, fault_timeout_ms, fault_stale_offset_ms, io_bound_mode, io_bound_base_us
     );
 
     let app = Router::new()
@@ -343,5 +363,13 @@ mod tests {
         d.push_back(1.0);
         d.push_back(5.0);
         assert_eq!(compute_median(&d), 5.0);
+    }
+
+    #[test]
+    fn io_bound_duration_computation() {
+        let iterations = (100_f64 * 1.0) as u64;
+        let io_bound_base_us: u64 = 50;
+        let sleep_us = iterations * io_bound_base_us;
+        assert_eq!(sleep_us, 5000);
     }
 }
