@@ -87,6 +87,104 @@ Arguments are:
 5. pause seconds between changes
 6. number of iterations
 
+## Rate ramp
+
+Drives a linearly increasing arrival rate to find the saturation point of the proxy. Useful for capacity-planning: watch p99 and error rate climb as the target rate exceeds backend capacity.
+
+```bash
+k6 run \
+  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e HOST_HEADER=bench.local \
+  -e WORK_ITERATIONS=1000 \
+  -e START_RATE=50 \
+  -e STEP_RATE=50 \
+  -e STEPS=6 \
+  -e STEP_DURATION=60s \
+  -e SUMMARY_PATH=./summary-rate_ramp.json \
+  benchmark/k6/rate_ramp.js
+```
+
+- `START_RATE`: initial requests/sec after warmup, default `50`
+- `STEP_RATE`: additional requests/sec added each step, default `50`
+- `STEP_DURATION`: how long each step lasts, default `60s`
+- `STEPS`: number of rate steps, default `6`
+- `PRE_ALLOCATED_VUS`: initial VU pool, default `64`
+- `MAX_VUS`: VU ceiling, default `512`
+- `SUMMARY_PATH`: output JSON path, default `./summary-rate_ramp.json`
+
+## Burst
+
+Alternates quiet idle windows with high-rate burst windows to test the proxy's ability to absorb sudden traffic spikes and recover quickly.
+
+```bash
+k6 run \
+  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e HOST_HEADER=bench.local \
+  -e WORK_ITERATIONS=1000 \
+  -e IDLE_RATE=10 \
+  -e BURST_RATE=500 \
+  -e IDLE_DURATION=30s \
+  -e BURST_DURATION=15s \
+  -e CYCLES=5 \
+  -e SUMMARY_PATH=./summary-burst.json \
+  benchmark/k6/burst.js
+```
+
+- `IDLE_RATE`: requests/sec during quiet windows, default `10`
+- `BURST_RATE`: requests/sec during burst windows, default `500`
+- `IDLE_DURATION`: length of each idle window, default `30s`
+- `BURST_DURATION`: length of each burst window, default `15s`
+- `CYCLES`: number of idle/burst cycle pairs, default `5`
+- `PRE_ALLOCATED_VUS`: initial VU pool, default `64`
+- `MAX_VUS`: VU ceiling, default `512`
+- `SUMMARY_PATH`: output JSON path, default `./summary-burst.json`
+
+## Long-duration
+
+Runs a sustained constant-arrival-rate load for an extended period (default 1 hour) to surface slow memory leaks, connection-pool exhaustion, or drift in the balancing algorithm over time. Emits a console marker every `MARKER_INTERVAL_SEC` seconds for Prometheus correlation.
+
+```bash
+k6 run \
+  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e HOST_HEADER=bench.local \
+  -e WORK_ITERATIONS=1000 \
+  -e RATE=200 \
+  -e DURATION=3600s \
+  -e MARKER_INTERVAL_SEC=300 \
+  -e SUMMARY_PATH=./summary-long_duration.json \
+  benchmark/k6/long_duration.js
+```
+
+- `RATE`: constant requests/sec, default `200`
+- `DURATION`: total test duration, default `3600s`
+- `MARKER_INTERVAL_SEC`: seconds between console marker lines, default `300`
+- `PRE_ALLOCATED_VUS`: initial VU pool, default `64`
+- `MAX_VUS`: VU ceiling, default `512`
+- `SUMMARY_PATH`: output JSON path, default `./summary-long_duration.json`
+
+## Overload
+
+Intentionally targets the proxy well above its expected saturation point (`RATE * OVERLOAD_MULTIPLIER`) to measure graceful degradation, queue depth behavior, and recovery. No error-rate threshold is enforced — high failure rates are expected and informative.
+
+```bash
+k6 run \
+  -e TARGET_URL=http://127.0.0.1:30080/work \
+  -e HOST_HEADER=bench.local \
+  -e WORK_ITERATIONS=1000 \
+  -e RATE=1000 \
+  -e OVERLOAD_MULTIPLIER=2.0 \
+  -e DURATION=300s \
+  -e SUMMARY_PATH=./summary-overload.json \
+  benchmark/k6/overload.js
+```
+
+- `RATE`: base requests/sec before multiplier, default `1000`
+- `OVERLOAD_MULTIPLIER`: factor applied to RATE for effective load, default `2.0`
+- `DURATION`: test duration, default `300s`
+- `PRE_ALLOCATED_VUS`: initial VU pool, default `256`
+- `MAX_VUS`: VU ceiling, default `2048`
+- `SUMMARY_PATH`: output JSON path, default `./summary-overload.json`
+
 ## Benchmark discipline
 
 - Keep host, path, request body, runtime, and cluster shape constant across algorithm comparisons.
