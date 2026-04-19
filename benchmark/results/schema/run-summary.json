@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "benchmark/results/schema/run-summary.json",
+  "title": "K6RunSummary",
+  "description": "Loose schema for the k6 --summary-export JSON output. Captures the fields used by render_report.sh.",
+  "type": "object",
+  "properties": {
+    "metrics": {
+      "type": "object",
+      "description": "Map of metric name to metric object",
+      "properties": {
+        "http_reqs": {
+          "$ref": "#/$defs/counterMetric",
+          "description": "Total HTTP requests"
+        },
+        "http_req_failed": {
+          "$ref": "#/$defs/rateMetric",
+          "description": "Fraction of failed HTTP requests"
+        },
+        "http_req_duration": {
+          "$ref": "#/$defs/trendMetric",
+          "description": "HTTP request duration in milliseconds"
+        },
+        "http_req_waiting": {
+          "$ref": "#/$defs/trendMetric",
+          "description": "Time to first byte"
+        },
+        "http_req_connecting": {
+          "$ref": "#/$defs/trendMetric",
+          "description": "TCP connection time"
+        },
+        "iterations": {
+          "$ref": "#/$defs/counterMetric",
+          "description": "Total k6 iterations"
+        },
+        "vus": {
+          "$ref": "#/$defs/gaugeMetric",
+          "description": "Active virtual users"
+        },
+        "vus_max": {
+          "$ref": "#/$defs/gaugeMetric",
+          "description": "Max virtual users"
+        }
+      },
+      "additionalProperties": true
+    },
+    "root_group": {
+      "type": "object",
+      "description": "Root group checks summary",
+      "additionalProperties": true
+    },
+    "state": {
+      "type": "object",
+      "description": "k6 run state",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "counterMetric": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "counter" },
+        "contains": { "type": "string" },
+        "values": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "number" },
+            "rate":  { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "thresholds": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "rateMetric": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "rate" },
+        "contains": { "type": "string" },
+        "values": {
+          "type": "object",
+          "properties": {
+            "rate":   { "type": "number" },
+            "passes": { "type": "number" },
+            "fails":  { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "thresholds": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "trendMetric": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "trend" },
+        "contains": { "type": "string" },
+        "values": {
+          "type": "object",
+          "properties": {
+            "avg":   { "type": "number" },
+            "min":   { "type": "number" },
+            "med":   { "type": "number" },
+            "max":   { "type": "number" },
+            "p(50)": { "type": "number" },
+            "p(90)": { "type": "number" },
+            "p(95)": { "type": "number" },
+            "p(99)": { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "thresholds": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "gaugeMetric": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "gauge" },
+        "contains": { "type": "string" },
+        "values": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "number" },
+            "min":   { "type": "number" },
+            "max":   { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "thresholds": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  }
+}

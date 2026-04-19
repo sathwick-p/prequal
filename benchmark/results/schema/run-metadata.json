@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "benchmark/results/schema/run-metadata.json",
+  "title": "RunMetadata",
+  "description": "Machine-readable metadata written by run_campaign.sh for every benchmark run.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "date_utc",
+    "git_sha",
+    "environment",
+    "scenario",
+    "algorithm",
+    "duration_seconds",
+    "target_rate_rps",
+    "workload_manifest",
+    "load_script",
+    "controller_env",
+    "backend_env"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "Unique identifier for this run, e.g. 2026-04-19T12-00-00Z-uniform-open-loop-prequal"
+    },
+    "date_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of the run start"
+    },
+    "git_sha": {
+      "type": "string",
+      "description": "Full git commit SHA at time of run, or 'unknown'"
+    },
+    "environment": {
+      "type": "string",
+      "description": "Short label for the cluster/environment, e.g. kind-local, kind-multinode, gke-test"
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Scenario identifier, e.g. uniform-open-loop, heterogeneous-rate-ramp"
+    },
+    "algorithm": {
+      "type": "string",
+      "enum": ["prequal", "round-robin", "least-connections"],
+      "description": "Load-balancing algorithm under test"
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Intended test duration in seconds (0 if not specified)"
+    },
+    "target_rate_rps": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Target request rate in requests per second (0 if not specified)"
+    },
+    "workload_manifest": {
+      "type": "string",
+      "description": "Relative path to the workload manifest used, e.g. benchmark/manifests/workload-uniform.yaml"
+    },
+    "load_script": {
+      "type": "string",
+      "description": "Relative path to the k6 script used, e.g. benchmark/k6/open_loop.js"
+    },
+    "controller_env": {
+      "type": "object",
+      "description": "Key-value map of relevant controller environment variables or config overrides",
+      "additionalProperties": { "type": "string" }
+    },
+    "backend_env": {
+      "type": "object",
+      "description": "Key-value map of relevant backend environment variables or config overrides",
+      "additionalProperties": { "type": "string" }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-text annotation for this run"
+    }
+  }
+}

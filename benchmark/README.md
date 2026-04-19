@@ -247,3 +247,90 @@ Prometheus scrapes the controller metrics endpoint via NodePort **30081** (`host
 | **Long-Duration Stability** | latency, request rate, error rate, queue depth, dropped probes over 6-24h |
 
 See [benchmark/observability/README.md](observability/README.md) for prerequisites, verification steps, and node-exporter integration.
+
+## Campaign runner and reporting
+
+All scripts live in `benchmark/scripts/` and are executable. They produce deterministic
+output under `benchmark/results/<DATE_UTC>-<SCENARIO>-<ALGORITHM>/`.
+
+### Full flow
+
+```
+benchmark/scripts/deploy_benchmark_stack.sh
+  -> benchmark/scripts/run_campaign.sh
+     (internally calls collect_results.sh)
+  -> benchmark/scripts/archive_results.sh
+  -> benchmark/scripts/render_report.sh
+```
+
+### 1. Deploy the benchmark stack
+
+```bash
+NAMESPACE=prequal-benchmark \
+MANIFESTS_DIR=benchmark/manifests \
+WORKLOAD=workload-uniform.yaml \
+benchmark/scripts/deploy_benchmark_stack.sh
+```
+
+Applies `controller-benchmark.yaml` and the chosen workload manifest, then waits
+for `deployment/prequal-controller` to roll out (timeout 180s). Idempotent.
+
+### 2. Run a campaign scenario
+
+```bash
+SCENARIO=uniform-open-loop \
+ALGORITHM=prequal \
+K6_SCRIPT=benchmark/k6/open_loop.js \
+RATE=500 \
+DURATION=300s \
+NOTES="first comparison run" \
+benchmark/scripts/run_campaign.sh
+```
+
+Writes to `benchmark/results/<DATE_UTC>-uniform-open-loop-prequal/`:
+- `run-metadata.json` — machine-readable run schema (see `benchmark/results/schema/run-metadata.json`)
+- `k6-summary.json` — raw k6 output
+- `command.txt` — exact k6 command
+- artifacts from `collect_results.sh` (see below)
+
+Canonical k6 scripts for each scenario:
+- Steady state: `benchmark/k6/steady_state.js`
+- Open loop: `benchmark/k6/open_loop.js`
+- Multi-route: `benchmark/k6/multi_route.js`
+- Rate ramp: `benchmark/k6/rate_ramp.js`
+- Burst: `benchmark/k6/burst.js`
+- Long duration: `benchmark/k6/long_duration.js`
+- Overload: `benchmark/k6/overload.js`
+
+### 3. Collect results (called automatically by run_campaign.sh)
+
+```bash
+benchmark/scripts/collect_results.sh benchmark/results/<run-dir>
+```
+
+Best-effort; skips any tool that is missing and logs to `notes.md`. Collects:
+`kubectl-top.txt`, `routes.json`, `controller-logs.txt`, `backend-logs.txt`,
+and `prometheus-export/*.json` (if Prometheus is reachable at `http://localhost:9090`).
+
+### 4. Archive a run
+
+```bash
+benchmark/scripts/archive_results.sh benchmark/results/<run-dir>
+```
+
+Produces `benchmark/results/archive/<run-dir-basename>.tar.gz` with paths
+relative to the results root.
+
+### 5. Render a Markdown report
+
+```bash
+benchmark/scripts/render_report.sh benchmark/results/<run-dir>
+```
+
+Reads `run-metadata.json` and `k6-summary.json`, substitutes values into
+`benchmark/report/templates/run-report.md`, and writes `report.md` into the
+run directory. Requires `jq` for full metric extraction; falls back to grep/sed
+with reduced accuracy and notes the limitation in `notes.md`.
+
+For campaign-level comparison across multiple runs, fill in
+`benchmark/report/templates/campaign-report.md` manually or with a chart script.
