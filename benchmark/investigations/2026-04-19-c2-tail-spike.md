@@ -127,8 +127,24 @@ C3 (ramp), C4 (multi-route), C5 (long-duration), C6 (overload), C7 (churn), C8 (
 | 2026-04-19 | Runner + collector patches (env capture, pool reset, interleaved wrapper, 2 new range queries) | `9918748` |
 | 2026-04-19 12:16-13:37 | C2-controlled-uniform-open-loop 5-rep interleaved | (pending commit) |
 | 2026-04-19 13:38-14:55 | C2-controlled-heterogeneous-open-loop 5-rep interleaved | (pending commit) |
-| 2026-04-19 | Root-cause close-out — see section 8 | (pending commit) |
+| 2026-04-19 | Root-cause close-out — see section 8 | `321adba` |
 | — | Parameter sweep — **not needed**; gap closed without changing defaults | — |
+| 2026-04-19 17:47-18:08 | C1-controlled-uniform-smoke 5-rep interleaved — prequal LOSES on throughput (≈25% behind RR) and on every summary percentile | (pending commit) |
+| 2026-04-19 18:09-19:49 | C3-heterogeneous-ramp 100→1500 rps 5-rep interleaved — medians tied; prequal's worst-case tail is ≈5× worse than RR, otherwise tied | (pending commit) |
+
+## 9. Post-closure finding: prequal doesn't win in any tested regime
+
+After C1 and C3 were run under the same controlled protocol, the summary is:
+
+- **C2 open-loop 500 rps (uniform + heterogeneous):** all three algorithms tied; prequal correctly avoids the slow replica.
+- **C1 closed-loop 30 VUs (uniform):** prequal loses by ≈25% throughput and 40-60% higher p99.
+- **C3 ramp 100→1500 rps (heterogeneous, saturation):** medians tied at ~700 rps sustained; prequal has catastrophic worst-case tails (p99 hit 1239 ms in one rep, vs 228 ms worst for RR).
+
+The paper's tail-latency advantage is not reproduced in any scenario we have tested. The per-backend selection data shows the HCL logic is correct (slow replica is consistently avoided at ~1/s vs ~200/s for fast replicas). So the algorithm is not "broken"; the overhead and occasional mis-ordering costs exceed the benefits in this regime.
+
+This is a legitimate negative-for-prequal result for the current implementation on this testbed. It does not disprove the Prequal paper; it means the regimes we can exercise locally (4 backends, CPU-bound SHA256, single kind host, up to ~700 rps sustained) are outside the band where the algorithm is expected to win. Matrix Campaign 3 section 3-C3 documents the regimes that might reveal an advantage: larger fleet, bigger skew, I/O-bound workload, dedicated multi-node cluster.
+
+This finding does not open a new investigation. The implementation is behaving as specified; the evaluation regime is the constraint.
 
 ## 8. Outcome of controlled re-run — decision rule applied
 
