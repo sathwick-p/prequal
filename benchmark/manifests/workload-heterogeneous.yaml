@@ -1,10 +1,12 @@
+# 16-backend IO-bound heterogeneous workload for the regime-pivot C2/C3 re-run.
+# Requires backend with IO_BOUND_MODE support (commit TBD).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: bench-fast
   namespace: prequal-benchmark
 spec:
-  replicas: 3
+  replicas: 14
   selector:
     matchLabels:
       app: bench-fast
@@ -25,6 +27,15 @@ spec:
           value: "8080"
         - name: WORK_MULTIPLIER
           value: "1.0"
+        - name: IO_BOUND_MODE
+          value: "1"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,7 +43,7 @@ metadata:
   name: bench-slow
   namespace: prequal-benchmark
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: bench-slow
@@ -52,7 +63,16 @@ spec:
         - name: PORT
           value: "8080"
         - name: WORK_MULTIPLIER
-          value: "4.0"
+          value: "16.0"
+        - name: IO_BOUND_MODE
+          value: "1"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
