@@ -1,8 +1,13 @@
-# Prequal: Load Testing and Benchmarking Plan
+# Prequal: Benchmarking and Load-Testing Plan
 
 ## 1. Purpose
 
-This document describes how to evaluate the current system thoroughly.
+This document describes how to evaluate the current system in a way that is:
+
+- faithful to the current implementation
+- repeatable
+- useful for algorithm comparison
+- strong enough to support public claims if executed rigorously
 
 The goals are:
 
@@ -13,11 +18,45 @@ The goals are:
 - understand failure and churn behavior
 - identify where the current implementation differs from the Prequal paper in practice
 
-This document is intentionally detailed so it can be used as an execution guide, not just a wish list.
+This document is an execution guide, not a wish list.
 
 ---
 
-## 2. What Must Be Measured
+## 2. Current Implementation Status
+
+The benchmark plan must match the code that exists today.
+
+Current relevant implementation facts:
+
+- the controller now replaces ingress routes atomically during reconciliation
+- probe pools are route-scoped, not global
+- probe generation is bounded by a worker pool and queue
+- pool maintenance is periodic and off the request hot path
+- request metrics are route-key based, not raw path based
+- benchmark assets now exist under `benchmark/`
+
+Relevant code:
+
+- route-scoped pools: `loadbalancer/pool/pools.go`
+- pool maintenance config: `loadbalancer/config.go`
+- bounded probing: `loadbalancer/prober.go`
+- atomic route replacement: `controller/controller.go`, `controller/router.go`
+- benchmark runtime manifests and scripts: `benchmark/`
+
+Important limitations that still exist:
+
+- the backend only reads `WORK_MULTIPLIER` at startup
+- the backend always emits current probe timestamps
+- there is no built-in runtime fault injection endpoint
+
+Implication:
+
+- “dynamic slowdown” must be tested by rollout / replica-mix change, not by changing one pod live unless you add a control endpoint
+- “stale timestamp” testing requires an explicit fault-injection backend or response mangling layer
+
+---
+
+## 3. What Must Be Measured
 
 At minimum, every benchmark run should capture:
 
@@ -28,26 +67,33 @@ At minimum, every benchmark run should capture:
 - p99.9 latency
 - error rate
 - backend request distribution
-- per-backend observed RIF
-- backend-reported probe latency
+- backend selection distribution by algorithm
+- route-scoped pool occupancy
 - probe success rate
 - probe failure rate by reason
-- pool occupancy
-- selection algorithm counts
+- probe queue depth
+- probe drops due to full queue
 - CPU and memory usage of:
-  - ingress controller
+  - ingress controller pods
   - backend pods
 
 If possible, also capture:
 
 - reconciliation latency under control-plane churn
 - stale probe rejection count
-- per-backend service time distribution
+- backend-reported probe latency distribution
+- backend-reported RIF distribution
 - saturation point where tail latency begins rising sharply
+
+If you add more observability later, also capture:
+
+- per-route pool maintenance effects
+- fresh pool occupancy
+- controller workqueue depth
 
 ---
 
-## 3. What Must Be Compared
+## 4. What Must Be Compared
 
 The primary algorithm comparison set should be:
 
@@ -55,25 +101,25 @@ The primary algorithm comparison set should be:
 - `least-connections`
 - `prequal`
 
-If you later add more variants, compare:
+The primary baseline set should also include:
 
-- probe-authoritative `prequal`
-- any hybrid fallback mode
-- any future paper-fidelity refinements
+- direct backend baseline, if you want to separate proxy cost from algorithm cost
+- proxy with probing effectively disabled, if you want to isolate probe overhead from routing overhead
 
 Every comparison should use the same:
 
 - backend topology
 - traffic pattern
-- concurrency
-- request mix
+- request payload
+- request rate model
 - runtime duration
+- cluster shape
 
 Otherwise results are not comparable.
 
 ---
 
-## 4. Benchmark Environments
+## 5. Benchmark Environments
 
 You should run benchmarks in multiple environments because each one answers a different question.
 
@@ -83,25 +129,24 @@ Purpose:
 
 - quick iteration
 - obvious regressions
-- logic validation
+- harness validation
 
 Examples:
 
 - single-node Kubernetes cluster
 - `kind`
 - `minikube`
-- local Docker-based setup
 
 Good for:
 
 - validating manifests
+- validating scripts
 - basic algorithm comparison
 - probe-path sanity checks
 
 Not good for:
 
 - final latency claims
-- noisy-neighbor conclusions
 - production-like network conclusions
 
 ### Environment B: Controlled multi-node cluster
@@ -110,7 +155,7 @@ Purpose:
 
 - realistic service routing
 - multiple backend replicas
-- more believable contention
+- believable contention
 
 Examples:
 
@@ -122,7 +167,8 @@ Good for:
 
 - serious algorithm comparison
 - background probing behavior
-- failure/churn testing
+- route isolation checks
+- failure and churn testing
 
 ### Environment C: Stress/scale environment
 
@@ -130,18 +176,35 @@ Purpose:
 
 - high route count
 - high concurrency
-- more replicas
 - larger state churn
 
 Good for:
 
 - scalability limits
-- probe overhead under load
 - controller and data-plane stability
+- route-scale cost
+- queue pressure and probe drop behavior
 
 ---
 
-## 5. Required Workloads
+## 6. Existing Benchmark Assets
+
+These assets already exist in the repository:
+
+- `benchmark/manifests/controller-benchmark.yaml`
+- `benchmark/manifests/workload-uniform.yaml`
+- `benchmark/manifests/workload-heterogeneous.yaml`
+- `benchmark/manifests/workload-multiroute.yaml`
+- `benchmark/k6/steady_state.js`
+- `benchmark/k6/open_loop.js`
+- `benchmark/k6/multi_route.js`
+- `benchmark/scripts/churn.sh`
+
+These are the current preferred starting points.
+
+---
+
+## 7. Required Workloads
 
 You need multiple workload shapes. One workload is not enough.
 
@@ -157,42 +220,34 @@ Purpose:
 - sanity-check balancing
 - verify `prequal` does not regress badly in a simple environment
 
-Expected result:
+Asset:
 
-- round-robin and least-connections may be fairly competitive
-- `prequal` should not behave erratically
+- `benchmark/manifests/workload-uniform.yaml`
 
 ### Workload 2: Heterogeneous backend capacity
 
 Description:
 
-- different backend groups have different `WORK_MULTIPLIER`
-- some replicas are intentionally slower
+- some replicas are intentionally slower via different `WORK_MULTIPLIER`
 
 Purpose:
 
 - verify signal-based routing actually matters
 
-Expected result:
+Asset:
 
-- `prequal` should prefer replicas showing lower effective latency and lower RIF
-- round-robin should degrade tail latency more
+- `benchmark/manifests/workload-heterogeneous.yaml`
 
 ### Workload 3: Time-varying load
 
 Description:
 
 - request rate ramps up and down over time
-- not just a fixed steady-state load
 
 Purpose:
 
 - test responsiveness of probe-driven decisions
-- observe pool freshness under changing load
-
-Expected result:
-
-- `prequal` should adapt faster than static or weakly informed methods
+- observe route-local pool freshness under changing load
 
 ### Workload 4: Burst load
 
@@ -203,11 +258,7 @@ Description:
 Purpose:
 
 - test background probing usefulness
-- test stale-pool and bootstrap behavior
-
-Expected result:
-
-- background probing should help avoid empty/stale pool starts
+- test idle-to-burst preparedness
 
 ### Workload 5: Uneven traffic skew
 
@@ -218,7 +269,12 @@ Description:
 Purpose:
 
 - verify route-local behavior under imbalance
-- observe if probe coverage stays healthy
+- confirm route pools do not bleed across hosts/routes
+
+Asset:
+
+- `benchmark/manifests/workload-multiroute.yaml`
+- `benchmark/k6/multi_route.js`
 
 ### Workload 6: Failure and timeout workload
 
@@ -233,9 +289,24 @@ Purpose:
 - test resilience of the probing path
 - verify fallback and stability
 
+### Workload 7: Churn workload
+
+Description:
+
+- scale backend replicas up/down during live traffic
+- update ingress/controller-relevant state during live traffic
+
+Purpose:
+
+- measure control-plane to data-plane stability
+
+Asset:
+
+- `benchmark/scripts/churn.sh`
+
 ---
 
-## 6. Benchmark Scenarios
+## 8. Benchmark Scenarios
 
 Each scenario should be run for every algorithm under comparison.
 
@@ -253,12 +324,16 @@ Measure:
 - median and tail latency
 - request distribution
 
+Recommended asset:
+
+- `benchmark/k6/open_loop.js`
+
 ### Scenario B: Load ramp
 
 Setup:
 
 - start low
-- gradually increase concurrency and request rate
+- gradually increase request rate
 
 Measure:
 
@@ -271,8 +346,7 @@ Measure:
 
 Setup:
 
-- one or two backends use higher `WORK_MULTIPLIER`
-- others remain normal
+- mix fast and slow replicas behind one service
 
 Measure:
 
@@ -284,13 +358,23 @@ Measure:
 
 Setup:
 
-- start with equal backends
-- during the run, increase `WORK_MULTIPLIER` for one subset
+- start with one backend mix
+- during the run, change effective capacity by rollout or replica-mix change
+
+Examples:
+
+- scale out the slow deployment
+- scale in the fast deployment
+- replace a fast deployment with a slower image/env config
 
 Measure:
 
 - time to detect and route away
 - transient tail-latency spike
+
+Note:
+
+- the backend does not currently support changing `WORK_MULTIPLIER` live in-process
 
 ### Scenario E: Probe endpoint degradation
 
@@ -298,7 +382,7 @@ Setup:
 
 - induce non-200 probe responses
 - induce probe timeouts
-- induce stale timestamps if possible
+- induce malformed probe payloads if possible
 
 Measure:
 
@@ -306,16 +390,20 @@ Measure:
 - fallback behavior
 - user-visible latency effect
 
+Note:
+
+- stale timestamps require explicit fault injection because the current backend always emits current time
+
 ### Scenario F: Idle-to-burst transition
 
 Setup:
 
 - allow the system to idle
-- then apply sudden high concurrency
+- then apply sudden high request rate
 
 Measure:
 
-- initial pool occupancy
+- initial route-scoped pool occupancy
 - startup tail latency
 - usefulness of background probing
 
@@ -349,7 +437,7 @@ Measure:
 
 ---
 
-## 7. Algorithm Questions To Answer
+## 9. Algorithm Questions To Answer
 
 The benchmarking effort should answer these exact questions.
 
@@ -369,12 +457,13 @@ The benchmarking effort should answer these exact questions.
 - how much does probe freshness matter?
 - what is the overhead of probing?
 - how sensitive is the algorithm to configuration values?
+- does route-local probe state remain isolated under multi-route traffic?
 
 ---
 
-## 8. Probe-Specific Measurements
+## 10. Probe-Specific Measurements
 
-You should treat the probing subsystem as a first-class benchmark target.
+Treat the probing subsystem as a first-class benchmark target.
 
 Measure:
 
@@ -386,21 +475,23 @@ Measure:
   - non_200
   - decode_error
   - stale
-- average probe latency
+- dropped probes by reason:
+  - queue_full
+- probe queue depth
 - distribution of backend-reported `RIF`
 - distribution of backend-reported latency estimates
-- pool occupancy over time
-- fresh occupancy over time if you add that metric later
+- route-scoped pool occupancy over time
 
-Important question:
+Important questions:
 
 - does probe volume materially affect backend CPU or request latency?
+- do probe queue drops appear before tail latency degradation?
 
 ---
 
-## 9. Configuration Sweep Plan
+## 11. Configuration Sweep Plan
 
-You should not benchmark only one configuration.
+Do not benchmark only one configuration.
 
 Sweep at least these:
 
@@ -449,6 +540,23 @@ Goal:
 
 - understand stale-data sensitivity
 
+### Pool maintenance sweep
+
+Vary:
+
+- `PoolMaintenanceInterval`
+
+Suggested values:
+
+- `50ms`
+- `100ms`
+- `250ms`
+- `500ms`
+
+Goal:
+
+- understand maintenance overhead vs stale-pool cleanup responsiveness
+
 ### QRIF sweep
 
 Vary:
@@ -475,9 +583,20 @@ Goal:
 
 - understand depletion vs staleness tradeoff
 
+### Probe worker sweep
+
+Vary:
+
+- `ProbeWorkers`
+- `TriggerQueueSize`
+
+Goal:
+
+- identify when probe production becomes a bottleneck or starts dropping work
+
 ---
 
-## 10. Backend Configuration Sweep
+## 12. Backend Configuration Sweep
 
 Also vary backend characteristics.
 
@@ -490,8 +609,8 @@ Vary:
 Examples:
 
 - all `1.0`
-- two at `1.0`, one at `2.0`
-- two at `1.0`, one at `4.0`
+- three fast + one slow at `4.0`
+- three fast + one slow at `8.0`
 
 ### Replica count
 
@@ -513,15 +632,19 @@ Vary:
 
 ---
 
-## 11. Tooling Recommendations
+## 13. Tooling Recommendations
 
-Choose one or two load generators and keep them consistent.
+Primary tools:
 
-Suggested tools:
+- `k6` for repeatable script-driven tests
+- `wrk2` if you want another fixed-rate latency analysis tool
 
-- `k6`
-- `vegeta`
-- `wrk2` if you want fixed-rate latency analysis
+Current repository assets:
+
+- `benchmark/k6/steady_state.js`
+- `benchmark/k6/open_loop.js`
+- `benchmark/k6/multi_route.js`
+- `benchmark/scripts/churn.sh`
 
 Cluster-facing helpers:
 
@@ -529,23 +652,23 @@ Cluster-facing helpers:
 - Prometheus + Grafana
 - direct scraping of `/metrics`
 
-If you want reproducibility:
+For reproducibility:
 
-- check in benchmark scripts
 - check in scenario configs
 - check in result schema
+- save raw outputs per run
 
 ---
 
-## 12. Metrics Collection Plan
+## 14. Metrics Collection Plan
 
 For every run, save:
 
 - algorithm name
 - config values
 - backend topology
-- request rate
-- concurrency
+- request rate model
+- request rate target
 - run duration
 - total requests
 - success count
@@ -565,7 +688,7 @@ Do not rely on ad hoc terminal screenshots.
 
 ---
 
-## 13. Run Discipline
+## 15. Run Discipline
 
 To make results trustworthy:
 
@@ -583,31 +706,35 @@ Suggested pattern:
 3. repeat 3-5 times
 4. aggregate results
 
+For the first serious pass, prefer open-loop testing over closed-loop testing.
+
 ---
 
-## 14. Failure and Robustness Testing
+## 16. Failure and Robustness Testing
 
 Do not benchmark only healthy cases.
 
 You should test:
 
 - backend pod restart during traffic
-- backend pod scale-down
+- backend pod scale-down during traffic
 - ingress update during traffic
 - probe endpoint returning 500
 - probe endpoint timing out
-- stale timestamps
+- malformed probe payloads
 - empty pool fallback behavior
+
+Only test stale timestamps after you add an explicit fault-injection path.
 
 You want to know:
 
 - does request traffic remain correct?
-- does the pool recover quickly?
+- do route-local pools recover quickly?
 - does the system fail closed or degrade gracefully?
 
 ---
 
-## 15. Control-Plane Benchmarks
+## 17. Control-Plane Benchmarks
 
 The data plane is not the only thing that matters.
 
@@ -622,7 +749,7 @@ These are especially important if you claim “ingress controller,” not just �
 
 ---
 
-## 16. Success Criteria
+## 18. Success Criteria
 
 The benchmarking effort should produce answers to these:
 
@@ -630,13 +757,14 @@ The benchmarking effort should produce answers to these:
 2. Is `prequal` better than `least-connections` enough to justify probe overhead?
 3. What probe configuration gives the best latency/overhead tradeoff?
 4. Does the system remain stable during churn, failure, and idle-to-burst transitions?
-5. Which remaining paper-fidelity refinements are justified by measured results?
+5. Does route-local state stay isolated under multi-route traffic?
+6. Which remaining paper-fidelity refinements are justified by measured results?
 
 If you cannot answer those, benchmarking is not complete.
 
 ---
 
-## 17. Deliverables
+## 19. Deliverables
 
 The full benchmarking work should produce:
 
@@ -649,20 +777,30 @@ The full benchmarking work should produce:
 - a written conclusion on:
   - best current algorithm
   - best current config
+  - route-isolation correctness
   - next refinement worth implementing
+
+If you want to publish the results publicly, also produce:
+
+- environment description
+- exact commands and config used
+- raw run artifacts or downloadable result bundle
+- limitations section
 
 ---
 
-## 18. Recommended Execution Order
+## 20. Recommended Execution Order
 
 Do the benchmarking work in this order:
 
-1. baseline steady-state comparison
-2. heterogeneous backend comparison
-3. load ramp and saturation analysis
-4. idle-to-burst analysis
-5. failure and timeout scenarios
-6. controller churn scenarios
-7. configuration sweeps
+1. deploy `benchmark/manifests/controller-benchmark.yaml`
+2. run `workload-uniform.yaml` with `benchmark/k6/steady_state.js`
+3. run `workload-uniform.yaml` with `benchmark/k6/open_loop.js`
+4. compare algorithms on `workload-heterogeneous.yaml`
+5. validate route isolation with `workload-multiroute.yaml` and `benchmark/k6/multi_route.js`
+6. run idle-to-burst analysis
+7. run churn tests with `benchmark/scripts/churn.sh`
+8. run failure scenarios
+9. run configuration sweeps
 
-This order gives you useful signal early without blocking on full complexity.
+This order gives useful signal early without blocking on full complexity.
