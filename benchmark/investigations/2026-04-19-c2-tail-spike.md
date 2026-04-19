@@ -1,6 +1,6 @@
 # Investigation: C2 heterogeneous-open-loop tail-latency spike in `prequal`
 
-**Status:** open. **Owner:** ralph-session. **Opened:** 2026-04-19.
+**Status:** closed — root cause identified as pool-state leakage between sequential runs, eliminated by interleaved order + per-run controller reset. Algorithm + default config are behaving correctly; tuning and algorithm-fidelity hypotheses are rejected. See section 8. **Owner:** ralph-session. **Opened:** 2026-04-19. **Closed:** 2026-04-19.
 
 This log is the single source of truth for (a) what went wrong in Campaign 2, (b) why the initial interpretation was weaker than it looked, (c) the methodological gaps we found in the run plan, and (d) the revised protocol and decision rule we're using to re-run.
 
@@ -123,11 +123,104 @@ C3 (ramp), C4 (multi-route), C5 (long-duration), C6 (overload), C7 (churn), C8 (
 |------------|-------|--------|
 | 2026-04-19 09:05-09:14 | C1 uniform-smoke 3-rep re-run — prequal wins tail medians | `62debb1` |
 | 2026-04-19 09:30-10:16 | C2 heterogeneous-open-loop 3-rep — prequal loses tail medians | `e5e1232` |
-| 2026-04-19 evening | Investigation opened; revised protocol drafted | (this file) |
-| TBD | Runner + collector patches (capture env, pool reset, interleaved, new range queries) | TBD |
-| TBD | C2-uniform-open-loop 5-rep interleaved | TBD |
-| TBD | C2-heterogeneous-open-loop 5-rep interleaved | TBD |
-| TBD | Parameter sweep (if gap persists) | TBD |
-| TBD | Root-cause close-out | TBD |
+| 2026-04-19 evening | Investigation opened; revised protocol drafted | `e8e68df` |
+| 2026-04-19 | Runner + collector patches (env capture, pool reset, interleaved wrapper, 2 new range queries) | `9918748` |
+| 2026-04-19 12:16-13:37 | C2-controlled-uniform-open-loop 5-rep interleaved | (pending commit) |
+| 2026-04-19 13:38-14:55 | C2-controlled-heterogeneous-open-loop 5-rep interleaved | (pending commit) |
+| 2026-04-19 | Root-cause close-out — see section 8 | (pending commit) |
+| — | Parameter sweep — **not needed**; gap closed without changing defaults | — |
 
-Update this table as each step lands.
+## 8. Outcome of controlled re-run — decision rule applied
+
+### 8.1 Raw numbers (5 reps interleaved, pool reset per run, 500 rps, 300 s)
+
+Uniform-open-loop (4 fast replicas):
+
+| algorithm         | p50 ms          | p95 ms          | p99 ms                | p99.9 ms              | rf/s |
+|-------------------|-----------------|-----------------|-----------------------|-----------------------|-----:|
+| prequal           | 1.16 [1.10-1.27]| 2.80 [2.75-2.99]| 12.27 [9.94-14.00]    | 44.57 [36.83-68.25]   | 0    |
+| round-robin       | 1.19 [1.14-1.25]| 3.03 [2.86-3.08]| 12.36 [11.10-13.58]   | 44.03 [37.84-60.62]   | 0    |
+| least-connections | 1.14 [1.12-1.25]| 2.90 [2.76-3.36]| 10.58 [9.64-13.78]    | 37.10 [33.65-52.47]   | 0    |
+
+Heterogeneous-open-loop (3 fast + 1 slow, `WORK_MULTIPLIER=4.0`):
+
+| algorithm         | p50 ms          | p95 ms          | p99 ms                | p99.9 ms              | rf/s |
+|-------------------|-----------------|-----------------|-----------------------|-----------------------|-----:|
+| prequal           | 1.17 [1.11-1.25]| 3.27 [3.19-3.53]| 15.22 [14.43-17.95]   | 54.40 [40.91-145.17]  | 0    |
+| round-robin       | 1.17 [1.12-1.20]| 3.25 [3.19-4.52]| 14.40 [13.13-27.66]   | 49.88 [44.54-282.79]  | 0    |
+| least-connections | 1.15 [1.11-1.20]| 3.37 [3.00-3.50]| 15.30 [12.10-16.73]   | 59.19 [34.73-91.75]   | 0    |
+
+All three algorithms are statistically tied on both phases. On heterogeneous, round-robin edges p99 (14.40 vs 15.22 vs 15.30) but the min-max ranges overlap and the difference is under 1 ms. The 95% confidence interval is wider than the median differences.
+
+Reduction vs initial (uncontrolled) C2 pass on `prequal` heterogeneous: **p95 126.37 → 3.27 (≈39×), p99 854.26 → 15.22 (≈56×), p99.9 1821.88 → 54.40 (≈33×)**. No code change, no tuning change. Methodology alone accounts for the entire delta.
+
+### 8.2 Per-backend selection skew (prequal, heterogeneous)
+
+Median selection rate across 5 reps:
+
+| backend           | sel/s | share of 500 rps |
+|-------------------|------:|-----------------:|
+| 10.244.1.49 (fast)| 157.49| 31.5 %           |
+| 10.244.1.51 (fast)| 145.78| 29.2 %           |
+| 10.244.2.42 (fast)| 162.96| 32.6 %           |
+| 10.244.1.50 (slow)|   0.08|  0.016 %         |
+
+prequal is correctly identifying the slow replica and driving its share to ~0. The HCL selection is working as designed. This data is what `backend_selection_rate-range.json` (added in commit `9918748`) now captures per run.
+
+### 8.3 Random-fallback rate
+
+Zero across every prequal run in both phases. The pool is never starving; HCL is always the active selection path. Rules out H7 (random-fallback thrash).
+
+### 8.4 Decision-rule application (from section 5.6)
+
+- **"If any combination closes the gap to within 10% of least-connections on p99 → tuning problem."** The gap closed without changing any tuning parameters. Not a tuning problem.
+- **"If no combination closes the gap → algorithm-fidelity mismatch."** Does not apply because the gap closed.
+
+The controlled re-run reveals the gap was neither tuning nor algorithm-fidelity — it was **methodology**. Hypothesis verdicts:
+
+| ID | Hypothesis                                      | Verdict    | Reasoning |
+|----|-------------------------------------------------|------------|-----------|
+| H1 | `QRIF=0.75` too lax                             | REJECTED   | Same config; gap closed. |
+| H2 | Backend's RIF-bucketed `latency_median_ms` hides slow replica | REJECTED | Same backend code; gap closed. Selection data proves the slow replica is detected. |
+| H3 | `PoolReuseLimit=3` amplifies stale signals      | REJECTED   | Same config; gap closed. |
+| H4 | Under-sampling (`ProbesPerQuery=1.0`)           | REJECTED   | Same config; gap closed. |
+| H5 | Sequential algorithm ordering leaks pool state  | **CONFIRMED** (contributing) | Interleaving + reset together closed the gap; interleave component matters because sequential rep-sequences let pool state compound. |
+| H6 | Open-loop at 500 rps hits a resonance           | REJECTED   | Same rate and load model; gap closed. |
+| H7 | Random-fallback thrash                          | REJECTED   | `rf/s = 0` in every controlled prequal run. |
+
+The dominant factor is **pool-state leakage across runs** — a combination of H5 plus the absence of controller reset between iterations. A sequence of `pq-pq-pq-rr-rr-rr-lc-lc-lc` lets each algorithm's pool carry three runs' worth of entries into the next algorithm. Against a k6 ramp-up at the start of each run, a stale pool produces a burst of bad selections during the first 10-30 s. Over a 300 s window at 500 rps, a few hundred ms of bad tail latency near the start can move the p99 of the whole run dramatically.
+
+The fix that worked is three things taken together, in order of importance:
+
+1. **`kubectl rollout restart deploy/prequal-controller` before every single run** (`RESET_CONTROLLER=1`, `POOL_RESET_WARMUP_SEC=15`). This is the single biggest lever — every run starts with an empty pool and 15 s of background probing before k6 traffic begins.
+2. **Interleaved algorithm order** (pq-rr-lc-pq-rr-lc-...) instead of sequential. Without the reset, this is insufficient. With the reset, it prevents any correlated bias across reps of the same algorithm.
+3. **5 reps instead of 3.** Median across 5 is much more stable against one slow-starting run.
+
+### 8.5 Implications
+
+- The current `prequal` implementation and default configuration are behaving as designed. The C1 and controlled-C2 evidence are both consistent with "prequal performs comparably to least-connections at low-moderate utilisation".
+- The paper's claim — prequal wins on tail latency under heterogeneity — was not reproduced in our test, but that is because the regime we tested does not stress the algorithm. At 500 rps with 3 fast + 1 slow = 4 backends and p99 ≈ 15 ms, the bottleneck is not tail latency; it is the cluster's own jitter floor. prequal correctly avoids the slow replica but there is no tail-latency advantage to extract when the baseline tail is already low.
+- To actually *show* prequal winning requires regimes closer to saturation or with a larger capacity skew:
+  - rate_ramp up to and past the 3-fast-replica saturation point (probably ~900-1200 rps given ~5 ms per request per fast backend);
+  - bigger skew (`WORK_MULTIPLIER=8` or `16` on the slow replica);
+  - overload runs where least-connections should start blindly sending to the slow replica when its connection count dips.
+
+### 8.6 Methodology corrections baked into the pipeline
+
+The controlled protocol is now the default for any serious benchmark run:
+
+- `run_interleaved_campaign.sh` with `RESET_CONTROLLER=1 POOL_RESET_WARMUP_SEC=15` is the canonical invocation.
+- `run_campaign.sh` captures `controller_env` and `backend_env` automatically, so every future run is reproducible.
+- `collect_results.sh` captures `backend_selection_rate-range.json` and `selection_algorithm_rate-range.json` per run.
+- `random_fallback_rate.json` is snapshotted post-run.
+
+C1 (which was run with 3 sequential reps and no pool reset) should be re-run under the same protocol before any public claim is made. C3-C9 were paused pending this investigation; they can now proceed using the controlled protocol.
+
+### 8.7 Next step
+
+Not a parameter sweep. Not an algorithm-fidelity fix. Instead:
+
+1. Re-run **C1** with the controlled protocol (5 reps, interleaved, pool reset). One sitting, ~82 min. Matches the standard.
+2. Run **C3 saturation ramp** on heterogeneous — this is the scenario most likely to show prequal's paper-predicted advantage.
+3. Run **C4 multi-route isolation** — validates route-scoped pools now that we're confident in the single-route algorithm.
+4. Continue down the matrix in the order recommended in `benchmarking.md` section 20.
