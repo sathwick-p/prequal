@@ -206,8 +206,11 @@ k6 run \
 
 ### Fault-injection manifests
 
-> **These four manifests require a fault-injection-aware backend image that does not yet exist.**
-> `prequal-backend:latest` does NOT implement `FAULT_PROBE_MODE`. The manifests define the deployment shape, ingress wiring, and env var contract so they are ready when a fault backend is built. See [benchmark/evidence-asset-spec.md section 10](evidence-asset-spec.md) for the full dependency description.
+`prequal-backend:latest` now implements `FAULT_PROBE_MODE` natively. Set the env var to one of `timeout`, `500`, `malformed`, or `stale_timestamp` to activate the corresponding fault. Optional tunables: `FAULT_TIMEOUT_MS` (default 5000) and `FAULT_STALE_OFFSET_MS` (default 60000). Rebuild the backend image before applying these manifests:
+
+```bash
+cd backend && docker build -t prequal-backend:latest .
+```
 
 - `benchmark/manifests/fault-probe-timeout.yaml` — `FAULT_PROBE_MODE=timeout`; host `fault-timeout.bench.local`. Pair with `benchmark/k6/open_loop.js`.
 - `benchmark/manifests/fault-probe-500.yaml` — `FAULT_PROBE_MODE=500` (probe returns HTTP 500); host `fault-500.bench.local`. Pair with `benchmark/k6/open_loop.js`.
@@ -223,7 +226,7 @@ kubectl apply -f benchmark/manifests/workload-route-scale.yaml
 # Long-duration soak workload
 kubectl apply -f benchmark/manifests/workload-long-duration.yaml
 
-# Fault-injection manifests (requires fault-injection backend image — see evidence-asset-spec.md §10)
+# Fault-injection manifests (rebuild backend image first: cd backend && docker build -t prequal-backend:latest .)
 kubectl apply -f benchmark/manifests/fault-probe-timeout.yaml
 kubectl apply -f benchmark/manifests/fault-probe-500.yaml
 kubectl apply -f benchmark/manifests/fault-probe-malformed.yaml

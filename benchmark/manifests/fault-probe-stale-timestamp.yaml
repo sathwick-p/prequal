@@ -1,10 +1,10 @@
-# IMPORTANT: This manifest depends on a fault-injection-aware backend image.
-# The default prequal-backend:latest image does NOT implement FAULT_PROBE_MODE.
-# This manifest defines the deployment shape, ingress wiring, and env var contract
-# for when a fault-injection backend exists, or for any engineer who builds a custom
-# image that implements FAULT_PROBE_MODE=stale_timestamp behavior (probe returns
-# a stale/far-past timestamp, exercising staleness detection in the controller).
-# See benchmark/evidence-asset-spec.md section 10 for details.
+# Fault-injection manifest: FAULT_PROBE_MODE=stale_timestamp
+# prequal-backend:latest implements FAULT_PROBE_MODE natively.
+# Rebuild before applying: cd backend && docker build -t prequal-backend:latest .
+# Env var contract:
+#   FAULT_PROBE_MODE=stale_timestamp  — probe returns valid JSON with timestamp offset into the past
+#   FAULT_STALE_OFFSET_MS             — optional, milliseconds subtracted from current time (default 60000)
+# The /work endpoint is unaffected.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -569,31 +569,22 @@ Campaign report sections:
 
 ## 10. Fault-Injection Assets
 
-The current backend cannot produce stale timestamps or malformed probe payloads by configuration alone.
+`prequal-backend:latest` now implements `FAULT_PROBE_MODE` via env-driven mode in the Rust backend. Set `FAULT_PROBE_MODE` to one of the four values to activate the corresponding fault on the `/probe` endpoint:
 
-Create:
+- `FAULT_PROBE_MODE=timeout` — probe handler sleeps for `FAULT_TIMEOUT_MS` milliseconds (default 5000) before responding, simulating a slow backend
+- `FAULT_PROBE_MODE=500` — probe returns HTTP 500, simulating a backend that rejects probes
+- `FAULT_PROBE_MODE=malformed` — probe returns a non-JSON body, exercising the controller's parse-error path
+- `FAULT_PROBE_MODE=stale_timestamp` — probe returns a valid JSON body with a timestamp offset into the past by `FAULT_STALE_OFFSET_MS` milliseconds (default 60000), exercising staleness detection
 
-- a small alternate backend image or variant manifest for:
-  - timeout
-  - 500
-  - malformed JSON
-  - stale timestamp
+The `/work` endpoint is unaffected in all modes.
 
-Options:
+Rebuild the backend image before applying fault manifests:
 
-- separate tiny fault backend
-- env-driven mode in the Rust backend
+```bash
+cd backend && docker build -t prequal-backend:latest .
+```
 
-The simplest approach is an env-driven mode in the Rust backend.
-
-If implemented, add:
-
-- `FAULT_PROBE_MODE=timeout`
-- `FAULT_PROBE_MODE=500`
-- `FAULT_PROBE_MODE=malformed`
-- `FAULT_PROBE_MODE=stale_timestamp`
-
-This is one of the highest-value missing assets.
+Future extension: per-request fault injection (e.g., fault only N% of probes) is not yet implemented. If desired, add a `FAULT_PROBE_RATE` env var and apply the fault probabilistically in the probe handler.
 
 ---
 

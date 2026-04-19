@@ -111,16 +111,14 @@ Purpose: validate ingress-controller behavior during change.
 
 ## Campaign 8 — Probe degradation and fault handling
 
-Purpose: validate probe-path resilience. **Blocked on fault-injection backend.**
-
-> The fault manifests (`fault-probe-timeout`, `fault-probe-500`, `fault-probe-malformed`, `fault-probe-stale-timestamp`) require a backend image that implements `FAULT_PROBE_MODE`. `prequal-backend:latest` does not yet. See [`benchmark/evidence-asset-spec.md` section 10](evidence-asset-spec.md). Until that backend exists, every Campaign-8 row is `blocked`.
+Purpose: validate probe-path resilience. Rebuild the backend image before applying fault manifests: `cd backend && docker build -t prequal-backend:latest .`
 
 | campaign_id        | scenario            | environment | algorithm | script                          | manifest                                                           | rate_model | duration | repetitions | owner      | status  | results_dir |
 |--------------------|---------------------|-------------|-----------|---------------------------------|--------------------------------------------------------------------|------------|----------|-------------|------------|---------|-------------|
-| C8-timeout-pq      | fault-probe-timeout | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-timeout.yaml`                     | open-200   | 300s     | 3           | unassigned | blocked |             |
-| C8-500-pq          | fault-probe-500     | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-500.yaml`                         | open-200   | 300s     | 3           | unassigned | blocked |             |
-| C8-malformed-pq    | fault-probe-malformed| E-B        | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-malformed.yaml`                   | open-200   | 300s     | 3           | unassigned | blocked |             |
-| C8-stale-pq        | fault-probe-stale   | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-stale-timestamp.yaml`             | open-200   | 300s     | 3           | unassigned | blocked |             |
+| C8-timeout-pq      | fault-probe-timeout | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-timeout.yaml`                     | open-200   | 300s     | 3           | unassigned | planned |             |
+| C8-500-pq          | fault-probe-500     | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-500.yaml`                         | open-200   | 300s     | 3           | unassigned | planned |             |
+| C8-malformed-pq    | fault-probe-malformed| E-B        | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-malformed.yaml`                   | open-200   | 300s     | 3           | unassigned | planned |             |
+| C8-stale-pq        | fault-probe-stale   | E-B         | prequal   | `benchmark/k6/open_loop.js`     | `benchmark/manifests/fault-probe-stale-timestamp.yaml`             | open-200   | 300s     | 3           | unassigned | planned |             |
 
 ---
 
@@ -139,7 +137,7 @@ Follow `benchmarking.md` section 20:
 5. Campaign 7 (churn)
 6. Campaign 6 (overload/burst)
 7. Campaign 5 (long-duration, 1h → 6h → 24h)
-8. Campaign 8 (fault injection) — blocked until fault backend exists
+8. Campaign 8 (fault injection) — rebuild backend image first (`cd backend && docker build -t prequal-backend:latest .`)
 
 ## Campaign 9 — External baseline (NGINX Ingress)
 

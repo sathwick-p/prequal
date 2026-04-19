@@ -1,9 +1,10 @@
-# IMPORTANT: This manifest depends on a fault-injection-aware backend image.
-# The default prequal-backend:latest image does NOT implement FAULT_PROBE_MODE.
-# This manifest defines the deployment shape, ingress wiring, and env var contract
-# for when a fault-injection backend exists, or for any engineer who builds a custom
-# image that implements FAULT_PROBE_MODE=timeout behavior.
-# See benchmark/evidence-asset-spec.md section 10 for details.
+# Fault-injection manifest: FAULT_PROBE_MODE=timeout
+# prequal-backend:latest implements FAULT_PROBE_MODE natively.
+# Rebuild before applying: cd backend && docker build -t prequal-backend:latest .
+# Env var contract:
+#   FAULT_PROBE_MODE=timeout  — probe handler sleeps FAULT_TIMEOUT_MS ms (default 5000) before responding
+#   FAULT_TIMEOUT_MS          — optional, milliseconds to sleep (default 5000)
+# The /work endpoint is unaffected.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
