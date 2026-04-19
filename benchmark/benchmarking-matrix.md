@@ -67,7 +67,56 @@ Purpose: main comparison set (uniform + heterogeneous, open-loop).
 | C2-het-rr      | heterogeneous-open-loop  | E-A         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 3           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-heterogeneous-open-loop.json) |
 | C2-het-lc      | heterogeneous-open-loop  | E-A         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 3           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-heterogeneous-open-loop.json) |
 
-### Campaign 2 heterogeneous-open-loop results (2026-04-19, E-A kind-local, 3 reps per algorithm)
+### Campaign 2 controlled re-run results (2026-04-19, E-A kind-local, 5 reps per algorithm, interleaved, pool reset between every run)
+
+Protocol (see [`investigations/2026-04-19-c2-tail-spike.md`](investigations/2026-04-19-c2-tail-spike.md)):
+
+- Interleaved order (pq-rr-lc-pq-rr-lc-...) instead of sequential, so no algorithm inherits pool warmth from prior runs of the same algorithm.
+- `kubectl rollout restart deploy/prequal-controller` between every run, followed by 15 s warmup.
+- `controller_env` and `backend_env` captured per run in `run-metadata.json`.
+- Prometheus range queries for `backend_selection_rate` and `selection_algorithm_rate` collected per run.
+- Same traffic profile as the initial pass: open-loop 500 rps, 300 s, `WORK_ITERATIONS=1000`, same two workload manifests.
+
+**Headline — the gap closed on both phases.** prequal is now statistically tied with both baselines, and selection skew data confirms prequal is correctly avoiding the slow replica.
+
+#### Phase 1: uniform-open-loop (3 fast backends, 4 replicas, `WORK_MULTIPLIER=1.0`)
+
+| algorithm         | reps | rps          | avg ms           | p50 ms          | p95 ms          | p99 ms                | p99.9 ms              | random_fallback/s |
+|-------------------|-----:|--------------|------------------|-----------------|-----------------|-----------------------|-----------------------|------------------:|
+| prequal           | 5    | 500 [500-500]| 1.65 [1.62-1.66] | 1.16 [1.10-1.27]| 2.80 [2.75-2.99]| 12.27 [9.94-14.00]    | 44.57 [36.83-68.25]   | 0.00              |
+| round-robin       | 5    | 500 [500-500]| 1.64 [1.59-1.77] | 1.19 [1.14-1.25]| 3.03 [2.86-3.08]| 12.36 [11.10-13.58]   | 44.03 [37.84-60.62]   | 0.00              |
+| least-connections | 5    | 500 [500-500]| 1.61 [1.52-1.65] | 1.14 [1.12-1.25]| 2.90 [2.76-3.36]| 10.58 [9.64-13.78]    | 37.10 [33.65-52.47]   | 0.00              |
+
+Screenshots: [`results/screenshots/2026-04-19-C2-controlled-uniform/`](results/screenshots/2026-04-19-C2-controlled-uniform/). Aggregated: [`results/aggregated/2026-04-19-C2-controlled-uniform-open-loop.json`](results/aggregated/2026-04-19-C2-controlled-uniform-open-loop.json).
+
+#### Phase 2: heterogeneous-open-loop (3 fast + 1 slow, `WORK_MULTIPLIER=4.0` on slow)
+
+| algorithm         | reps | rps          | avg ms           | p50 ms          | p95 ms          | p99 ms                | p99.9 ms              | random_fallback/s |
+|-------------------|-----:|--------------|------------------|-----------------|-----------------|-----------------------|-----------------------|------------------:|
+| prequal           | 5    | 500 [500-500]| 1.85 [1.64-2.09] | 1.17 [1.11-1.25]| 3.27 [3.19-3.53]| 15.22 [14.43-17.95]   | 54.40 [40.91-145.17]  | 0.00              |
+| round-robin       | 5    | 500 [500-500]| 1.75 [1.71-2.72] | 1.17 [1.12-1.20]| 3.25 [3.19-4.52]| 14.40 [13.13-27.66]   | 49.88 [44.54-282.79]  | 0.00              |
+| least-connections | 5    | 500 [500-500]| 1.79 [1.62-1.90] | 1.15 [1.11-1.20]| 3.37 [3.00-3.50]| 15.30 [12.10-16.73]   | 59.19 [34.73-91.75]   | 0.00              |
+
+Screenshots: [`results/screenshots/2026-04-19-C2-controlled-heterogeneous/`](results/screenshots/2026-04-19-C2-controlled-heterogeneous/). Aggregated: [`results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json`](results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json).
+
+#### Per-backend selection skew — prequal correctly avoids the slow replica
+
+Median selection rate across the 5 prequal reps on heterogeneous (backend IPs; 3 fast + 1 slow deployed at phase-2 start):
+
+| backend IP        | median selections/s | range            | interpretation                       |
+|-------------------|--------------------:|------------------|--------------------------------------|
+| 10.244.1.49:8080  | 157.49              | [149.64, 171.32] | fast — receives traffic              |
+| 10.244.1.51:8080  | 145.78              | [121.88, 170.13] | fast — receives traffic              |
+| 10.244.2.42:8080  | 162.96              | [125.75, 167.47] | fast — receives traffic              |
+| **10.244.1.50:8080** | **0.08**         | [0.03, 0.16]     | **slow — effectively blackholed**    |
+
+prequal routes ~99.95% of requests to the three fast replicas. The old backend IPs (10.244.1.20/21/2.22/23 from phase-1 workload) have median 0/s, as expected. This is the behavior the algorithm is supposed to produce.
+
+#### Comparison — initial C2 pass (sequential, no pool reset) vs controlled re-run
+
+The initial 2026-04-19 C2 pass recorded `prequal` p95=126.37 ms, p99=854.26 ms, p99.9=1821.88 ms on heterogeneous. After methodology fixes the same algorithm produces p95=3.27 ms, p99=15.22 ms, p99.9=54.40 ms. Reduction factors: **~40× p95, ~56× p99, ~34× p99.9**. No code change, no tuning change. The failure was pool-state leakage between sequential runs + absence of reset. That writes off the initial C2 tail-spike result as a methodology artefact, not an algorithm defect. The initial pass is preserved below for audit trail.
+
+### Campaign 2 heterogeneous-open-loop results (2026-04-19, E-A kind-local, 3 reps per algorithm) — superseded by controlled re-run above
 
 Open-loop constant-arrival-rate, 500 rps, 300s per run, WORK_ITERATIONS=1000. Backend topology: 3 fast replicas (`WORK_MULTIPLIER=1.0`) + 1 slow replica (`WORK_MULTIPLIER=4.0`) behind a single service. Each cell shows `median [min-max]` across 3 runs; all latencies in ms.
 

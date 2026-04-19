@@ -1,0 +1,3 @@
+===== bench-uniform =====
+Found 4 pods, using pod/bench-uniform-55bff757d7-2wftb
+prequal-backend listening on 0.0.0.0:8080 fault_mode=None fault_timeout_ms=300000 fault_stale_offset_ms=10000
