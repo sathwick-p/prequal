@@ -141,6 +141,23 @@ Follow `benchmarking.md` section 20:
 7. Campaign 5 (long-duration, 1h → 6h → 24h)
 8. Campaign 8 (fault injection) — blocked until fault backend exists
 
+## Campaign 9 — External baseline (NGINX Ingress)
+
+Purpose: proxy-overhead comparison against a mainstream ingress controller for
+Claim-Level-B evidence. Same backend image, same k6 script, same work payload.
+See `benchmark/public-claim-playbook.md` section 13 and `benchmark/README.md`
+"External baseline: NGINX Ingress" for install and fairness notes.
+
+Prerequisites: `bash benchmark/scripts/install_nginx_baseline.sh` and
+`kubectl apply -f benchmark/manifests/baseline-nginx-controller.yaml`.
+
+| campaign_id   | scenario      | environment | algorithm | script                          | manifest                                                     | rate_model | duration | repetitions | owner      | status  | results_dir |
+|---------------|---------------|-------------|-----------|---------------------------------|--------------------------------------------------------------|------------|----------|-------------|------------|---------|-------------|
+| C9-uni-nginx  | uniform       | E-B         | nginx     | `benchmark/k6/open_loop.js`     | `benchmark/manifests/baseline-nginx-workload.yaml`           | open-500   | 300s     | 5           | unassigned | planned |             |
+| C9-het-nginx  | heterogeneous | E-B         | nginx     | `benchmark/k6/open_loop.js`     | `benchmark/manifests/baseline-nginx-heterogeneous.yaml`      | open-500   | 300s     | 5           | unassigned | planned |             |
+
+---
+
 ## Updating this matrix
 
 - When a run starts: set `status=in-progress`, `owner=<agent-or-engineer>`, and the path under `benchmark/results/` in `results_dir`.

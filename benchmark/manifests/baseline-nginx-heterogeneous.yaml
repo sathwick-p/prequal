@@ -1,0 +1,97 @@
+# NGINX Ingress baseline — heterogeneous workload
+#
+# Mirrors workload-heterogeneous.yaml (fast + slow deployments behind one
+# service) with names suffixed -nginx and ingressClassName nginx.
+# Host: bench-nginx-het.local, NodePort 30180.
+#
+# k6 targeting:
+#   TARGET_URL=http://127.0.0.1:30180/work HOST_HEADER=bench-nginx-het.local \
+#     k6 run benchmark/k6/open_loop.js
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-fast-nginx
+  namespace: prequal-benchmark
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bench-fast-nginx
+  template:
+    metadata:
+      labels:
+        app: bench-fast-nginx
+        app.kubernetes.io/part-of: bench-heterogeneous-nginx
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "1.0"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-slow-nginx
+  namespace: prequal-benchmark
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bench-slow-nginx
+  template:
+    metadata:
+      labels:
+        app: bench-slow-nginx
+        app.kubernetes.io/part-of: bench-heterogeneous-nginx
+    spec:
+      containers:
+      - name: backend
+        image: prequal-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: WORK_MULTIPLIER
+          value: "4.0"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-heterogeneous-nginx
+  namespace: prequal-benchmark
+spec:
+  selector:
+    app.kubernetes.io/part-of: bench-heterogeneous-nginx
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bench-heterogeneous-nginx
+  namespace: prequal-benchmark
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: bench-nginx-het.local
+    http:
+      paths:
+      - path: /work
+        pathType: Prefix
+        backend:
+          service:
+            name: bench-heterogeneous-nginx
+            port:
+              number: 8080

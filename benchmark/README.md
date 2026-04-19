@@ -339,3 +339,74 @@ with reduced accuracy and notes the limitation in `notes.md`.
 
 For campaign-level comparison across multiple runs, fill in
 `benchmark/report/templates/campaign-report.md` manually or with a chart script.
+
+## External baseline: NGINX Ingress
+
+**Purpose:** Isolate proxy-overhead from prequal-specific algorithmic gains. By running
+the same backend image, same k6 scripts, and same workload shapes through a mainstream
+ingress controller, you get a proxy-cost floor that makes prequal tail-latency results
+interpretable as algorithm effect rather than ingress-layer overhead. This is Claim-Level-B
+evidence per `benchmark/public-claim-playbook.md` section 13.
+
+### Install the NGINX controller
+
+```bash
+# Downloads controller-v1.11.2 from the official kind-compatible upstream,
+# verifies SHA256, and applies it to the ingress-nginx namespace.
+bash benchmark/scripts/install_nginx_baseline.sh
+
+# Patch the NodePorts to 30180 (http) and 30143 (https) — avoids collision
+# with the prequal controller on 30080/30443.
+kubectl apply -f benchmark/manifests/baseline-nginx-controller.yaml
+```
+
+Wait for the controller to be ready:
+
+```bash
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s
+```
+
+### Apply baseline workloads
+
+```bash
+# Uniform workload (mirrors workload-uniform.yaml, host bench-nginx.local)
+kubectl apply -f benchmark/manifests/baseline-nginx-workload.yaml
+
+# Heterogeneous workload (mirrors workload-heterogeneous.yaml, host bench-nginx-het.local)
+kubectl apply -f benchmark/manifests/baseline-nginx-heterogeneous.yaml
+```
+
+### Target NGINX from k6
+
+Uniform:
+
+```bash
+TARGET_URL=http://127.0.0.1:30180/work \
+HOST_HEADER=bench-nginx.local \
+k6 run benchmark/k6/open_loop.js
+```
+
+Heterogeneous:
+
+```bash
+TARGET_URL=http://127.0.0.1:30180/work \
+HOST_HEADER=bench-nginx-het.local \
+k6 run benchmark/k6/open_loop.js
+```
+
+### Fairness notes
+
+- Same backend image (`prequal-backend:latest`) with identical `WORK_MULTIPLIER` values.
+- Same work payload (`/work` path, same k6 script and env vars).
+- Same measurement window (300s, 5 repetitions per Campaign 9 rows).
+- Record the NGINX Ingress controller version in `run-metadata.json` under `notes`
+  (e.g. `"nginx_version": "controller-v1.11.2"`).
+
+### Limitations
+
+NGINX Ingress has no algorithm equivalent to prequal's HCL probe-driven selection.
+Its upstream selection for a given service defaults to round-robin with keepalive.
+Comparing tail latency to prequal is valid only as an **ingress-overhead baseline** —
+it shows what a production-grade proxy costs without algorithmic awareness — not as a
+direct algorithm comparison. Use Campaign 2 (prequal vs round-robin vs least-connections
+within the same controller) for the algorithm comparison.

@@ -1,0 +1,54 @@
+# NGINX Ingress controller for kind clusters — EXTERNAL BASELINE
+#
+# Approach: option (b) — wrapper script, not inlined manifest.
+# The upstream kind-compatible deploy YAML is 673 lines, exceeding the 500-line
+# inline threshold. Use benchmark/scripts/install_nginx_baseline.sh to download
+# and apply it reproducibly.
+#
+# Pinned upstream URL:
+#   https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.2/deploy/static/provider/kind/deploy.yaml
+# SHA256 of resolved YAML (as of 2026-04-19):
+#   dc850e38ca4abcb08625f1601f0656c81b6b5e34cc23d5458c332060732c14e0
+# NGINX Ingress controller version: controller-v1.11.2
+#
+# Install:
+#   bash benchmark/scripts/install_nginx_baseline.sh
+#
+# This file contains only the NodePort patch for the ingress-nginx-controller
+# Service. The upstream manifest uses NodePort by default for kind; this patch
+# pins the specific ports used in this benchmark (30180/http, 30143/https)
+# to avoid colliding with the prequal controller NodePorts (30080/30443).
+#
+# Apply AFTER running install_nginx_baseline.sh:
+#   kubectl apply -f benchmark/manifests/baseline-nginx-controller.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/component: controller
+    benchmark.prequal/role: external-baseline
+  annotations:
+    benchmark.prequal/nginx-version: "controller-v1.11.2"
+    benchmark.prequal/upstream-sha256: "dc850e38ca4abcb08625f1601f0656c81b6b5e34cc23d5458c332060732c14e0"
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/component: controller
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+    nodePort: 30180
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: https
+    nodePort: 30143
