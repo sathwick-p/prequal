@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"process_resident_memory_bytes","instance":"host.docker.internal:31081","job":"prequal-controller"},"values":[[1776621505,"36536320"],[1776621520,"46641152"],[1776621535,"45969408"],[1776621550,"45453312"],[1776621565,"45461504"]]}]}}

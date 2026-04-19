@@ -1,0 +1,57 @@
+{
+  "run_id": "2026-04-19T17-55-09Z-uniform-smoke-controlled-least-connections",
+  "date_utc": "2026-04-19T17:55:10Z",
+  "git_sha": "4ed0a1e2a54dba2c9fc937152aea033cc44e9137",
+  "environment": "kind-local",
+  "scenario": "uniform-smoke-controlled",
+  "algorithm": "least-connections",
+  "duration_seconds": 60,
+  "target_rate_rps": 0,
+  "workload_manifest": "benchmark/manifests/workload-uniform.yaml",
+  "load_script": "benchmark/k6/steady_state.js",
+  "controller_env": [
+    {
+      "name": "PREQUAL_BENCHMARK_MODE",
+      "value": "true"
+    },
+    {
+      "name": "PREQUAL_LOG_REQUESTS",
+      "value": "false"
+    },
+    {
+      "name": "PREQUAL_PROBE_WORKERS",
+      "value": "16"
+    },
+    {
+      "name": "PREQUAL_PROBE_QUEUE_SIZE",
+      "value": "4096"
+    },
+    {
+      "name": "PREQUAL_PROBES_PER_QUERY",
+      "value": "1.0"
+    },
+    {
+      "name": "PREQUAL_BACKGROUND_INTERVAL_MS",
+      "value": "100"
+    },
+    {
+      "name": "PREQUAL_POOL_MAX_AGE_MS",
+      "value": "1000"
+    },
+    {
+      "name": "PREQUAL_MAX_PROBE_AGE_MS",
+      "value": "2000"
+    },
+    {
+      "name": "PREQUAL_POOL_MAINTENANCE_INTERVAL_MS",
+      "value": "100"
+    }
+  ],
+  "backend_env": [
+    {
+      "name": "WORK_MULTIPLIER",
+      "value": "1.0"
+    }
+  ],
+  "notes": "C1 controlled re-run, 5 reps interleaved, pool reset each rep; rep 2/5 algo=least-connections INTERLEAVED"
+}

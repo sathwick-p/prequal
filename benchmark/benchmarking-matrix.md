@@ -33,26 +33,38 @@ Purpose: validate harness, manifests, metrics collection.
 
 | campaign_id | scenario           | environment | algorithm        | script                                  | manifest                                           | rate_model   | duration | repetitions | owner        | status       | results_dir |
 |-------------|--------------------|-------------|------------------|-----------------------------------------|----------------------------------------------------|--------------|----------|-------------|--------------|--------------|-------------|
-| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
-| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
-| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 3           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-uniform-smoke.json) |
+| C1-smoke-pq | uniform-smoke      | E-A         | prequal          | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 5           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-controlled-uniform-smoke.json) |
+| C1-smoke-rr | uniform-smoke      | E-A         | round-robin      | `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 5           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-controlled-uniform-smoke.json) |
+| C1-smoke-lc | uniform-smoke      | E-A         | least-connections| `benchmark/k6/steady_state.js`          | `benchmark/manifests/workload-uniform.yaml`        | closed-loop  | 60s      | 5           | ralph-session| done         | [aggregate](results/aggregated/2026-04-19-C1-controlled-uniform-smoke.json) |
 
-### Campaign 1 results (2026-04-19, E-A kind-local, 3 reps per algorithm)
+### Campaign 1 controlled results (2026-04-19, E-A kind-local, 5 reps interleaved, pool reset between every run)
 
-Closed-loop 30 VUs, 60s steady-state, WORK_ITERATIONS=1000, uniform workload (4 backend replicas, WORK_MULTIPLIER=1.0). Each cell shows `median [min-max]` across 3 runs; all latencies in ms.
+Closed-loop 30 VUs, 60 s steady-state, `WORK_ITERATIONS=1000`, uniform workload (4 backend replicas, `WORK_MULTIPLIER=1.0`). Median [min-max] across 5 runs per algorithm, controller reset + 15 s warmup before every run. All latencies in ms.
 
-| algorithm         | reps | rps              | avg ms          | p50 ms         | p95 ms            | p99 ms            | p99.9 ms              |
-|-------------------|-----:|------------------|-----------------|----------------|-------------------|-------------------|-----------------------|
-| prequal           | 3    | 5649 [4586-5964] | 5.26 [4.98-6.49]| 4.60 [4.36-5.57]| 10.24 [9.68-13.29]| 15.46 [14.83-21.01]| 36.13 [30.34-45.06]  |
-| round-robin       | 3    | 5821 [4322-6155] | 5.10 [4.83-6.89]| 4.20 [4.09-5.46]| 10.64 [9.80-15.07]| 18.90 [16.18-30.68]| 46.16 [34.69-79.46]  |
-| least-connections | 3    | 5227 [4881-6110] | 5.69 [4.86-6.09]| 4.66 [4.11-4.69]| 12.11 [9.72-13.96]| 21.62 [16.48-26.52]| 53.19 [38.23-76.58]  |
+| algorithm         | reps | rps               | avg ms          | p50 ms          | p95 ms               | p99 ms                 | p99.9 ms                  | rf/s |
+|-------------------|-----:|-------------------|-----------------|-----------------|----------------------|------------------------|---------------------------|-----:|
+| prequal           | 5    | 4162 [3566-5108]  | 7.15 [5.81-8.35]| 5.55 [4.96-6.72]| 15.31 [11.77-18.31]  | 29.86 [19.10-38.32]    | 81.72 [40.87-139.35]      | 0    |
+| round-robin       | 5    | 5366 [4217-6046]  | 5.54 [4.91-7.05]| 4.56 [4.14-5.38]| 11.67 [9.90-16.69]   | 20.22 [16.74-32.07]    | 49.01 [39.87-74.56]       | 0    |
+| least-connections | 5    | 4965 [4095-6012]  | 5.98 [4.94-7.26]| 4.87 [4.16-5.73]| 12.95 [9.78-16.53]   | 23.48 [16.97-30.18]    | 48.15 [38.43-74.14]       | 0    |
 
-Observations:
-- Throughput is essentially tied (prequal 5649 rps, round-robin 5821, least-connections 5227 — all within ~10% and overlapping min-max ranges). Under uniform capacity the three algorithms are throughput-equivalent, as expected.
-- **Tail latency tells a different story:** `prequal` has the lowest p99 (15.5ms median vs 18.9ms round-robin and 21.6ms least-connections) and the lowest p99.9 (36.1ms median vs 46.2 and 53.2). Even on uniform capacity where the paper predicts the overhead of probing should roughly break even, the HCL (hot/cold lexicographic) selection appears to dampen pathological tails introduced by transient RIF spikes. This is a suggestive signal — not a strong claim — that should be re-tested with Campaign 2 heterogeneous, where the effect should widen.
-- Variance across reps is meaningful: prequal's p99 ranged 14.83–21.01, round-robin 16.18–30.68, least-connections 16.48–26.52. `round-robin`'s p99.9 in its worst rep (79.46ms) is 2.2× prequal's worst rep. Single-rep runs are not trustworthy; 3 reps is the minimum.
-- Raw per-run artifacts live under `benchmark/results/2026-04-19T09-*-uniform-smoke-*/` (9 directories). Aggregated JSON at [`results/aggregated/2026-04-19-C1-uniform-smoke.json`](results/aggregated/2026-04-19-C1-uniform-smoke.json).
-- Campaign 2 (heterogeneous open-loop) is next and is the decisive test for `prequal` vs. the baselines.
+Screenshots: [`results/screenshots/2026-04-19-C1-controlled/`](results/screenshots/2026-04-19-C1-controlled/). Aggregate: [`results/aggregated/2026-04-19-C1-controlled-uniform-smoke.json`](results/aggregated/2026-04-19-C1-controlled-uniform-smoke.json).
+
+Observations — **prequal does not win here**.
+
+- **Throughput:** prequal sustains 4162 rps vs round-robin 5366 (≈29% faster) and least-connections 4965 (≈19% faster). Prequal is the slowest on median throughput by a meaningful margin, in every rep.
+- **Tail latency:** prequal is worse on p95 (15.3 vs 11.7 vs 13.0 ms), worse on p99 (29.9 vs 20.2 vs 23.5 ms), and worse on p99.9 (81.7 vs 49.0 vs 48.1 ms). The worst prequal p99.9 rep hits 139 ms; round-robin's worst is 74 ms.
+- `random_fallback_rate = 0` across every prequal run — pool is never starving, HCL is always active.
+- Per-backend selection for prequal on uniform: 4 backends at ~600-660/s each (total ≈ 2500/s of prequal's 4162 rps including re-probes). The load is evenly distributed — so the throughput gap is not caused by skewed selection. It's caused by per-request overhead in the prequal path itself.
+
+This supersedes the earlier 2026-04-19 3-rep C1 pass (sequential, no pool reset) that reported prequal winning on tail medians. Under the controlled protocol prequal is strictly worse on every summary percentile. The earlier 3-rep pass is preserved under `results/2026-04-19T09-*-uniform-smoke-*/` for audit trail.
+
+**Candidate explanations for the prequal throughput gap:**
+
+1. Probe path costs more than the paper's model. `ProbesPerQuery=1.0` fires one async probe per request; at 4000 rps that's 4000 probes/sec with 100 ms timeouts, which saturates a single Go HTTP client's worker pool (`ProbeWorkers=16`, `TriggerQueueSize=1024`). The probes are async but they compete for controller CPU and the network budget.
+2. HCL selection overhead. On every request the controller sorts the pool by RIF, picks the QRIF quantile, then picks min-latency among cold entries. With `PoolMaxSize=16`, that's 16-entry operations per request. On a CPU-bound SHA256 backend, this adds non-trivial per-request latency.
+3. Request-path lock contention. `pool.Select` takes a mutex; at 4000 rps the lock is held for microseconds, and contention can show up on p99+.
+
+Not a bug, but a real implementation cost that the paper's model does not include. See investigation log section 8.5 for context.
 
 ## Campaign 2 — Algorithm comparison under controlled load
 
@@ -150,9 +162,39 @@ Purpose: where each algorithm breaks down.
 
 | campaign_id   | scenario           | environment | algorithm        | script                           | manifest                                                 | rate_model | duration | repetitions | owner      | status  | results_dir |
 |---------------|--------------------|-------------|------------------|----------------------------------|----------------------------------------------------------|------------|----------|-------------|------------|---------|-------------|
-| C3-ramp-pq    | heterogeneous-ramp | E-B         | prequal          | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp       | 360s     | 3           | unassigned | planned |             |
-| C3-ramp-rr    | heterogeneous-ramp | E-B         | round-robin      | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp       | 360s     | 3           | unassigned | planned |             |
-| C3-ramp-lc    | heterogeneous-ramp | E-B         | least-connections| `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp       | 360s     | 3           | unassigned | planned |             |
+| C3-ramp-pq    | heterogeneous-ramp | E-A         | prequal          | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
+| C3-ramp-rr    | heterogeneous-ramp | E-A         | round-robin      | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
+| C3-ramp-lc    | heterogeneous-ramp | E-A         | least-connections| `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
+
+### Campaign 3 controlled results (2026-04-19, E-A kind-local, 5 reps interleaved, pool reset between every run)
+
+Ramping-arrival-rate: `START_RATE=100`, `STEP_RATE=200`, `STEPS=8`, `STEP_DURATION=45s` — ramps through 100, 300, 500, 700, 900, 1100, 1300, 1500 rps over 370 s. Heterogeneous workload (3 fast + 1 slow, `WORK_MULTIPLIER=4.0`). Controller reset + 15 s warmup before every run. Median [min-max] across 5 runs per algorithm; latencies in ms.
+
+| algorithm         | reps | rps (sustained)   | avg ms            | p50 ms          | p95 ms                | p99 ms                    | p99.9 ms                      | rf/s |
+|-------------------|-----:|-------------------|-------------------|-----------------|-----------------------|---------------------------|-------------------------------|-----:|
+| prequal           | 5    | 696 [683-696]     | 2.65 [1.81-42.31] | 0.90 [0.85-1.27]| 6.23 [4.32-**154.56**]| 39.30 [18.62-**1239.07**] | 150.23 [65.37-**2010.66**]    | 0    |
+| round-robin       | 5    | 696 [693-696]     | 2.59 [2.17-9.37]  | 1.10 [1.01-1.11]| 6.36 [4.75-14.09]     | 34.78 [28.22-228.20]      | 132.96 [102.80-1058.88]       | 0    |
+| least-connections | 5    | 695 [691-696]     | 3.17 [1.96-21.48] | 1.05 [0.91-1.21]| 7.91 [4.82-37.76]     | 45.62 [24.58-498.25]      | 240.71 [63.02-1905.43]        | 0    |
+
+Screenshots: [`results/screenshots/2026-04-19-C3-ramp/`](results/screenshots/2026-04-19-C3-ramp/). Aggregate: [`results/aggregated/2026-04-19-C3-heterogeneous-ramp.json`](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json).
+
+Observations — **prequal does not show a paper-predicted advantage; its worst-case tail is dramatically worse than baselines**.
+
+- **Sustained throughput is capped at ~696 rps** (well below the 800-rps average ramp target), identical for all three algorithms. At `WORK_ITERATIONS=1000` per request the SHA256 work on 3 fast backends saturates around 700 rps; the top ramp steps (900–1500 rps) degrade into steady-state-at-saturation rather than achieving the target.
+- **Medians are tied** (prequal p99 = 39.3, round-robin 34.8, least-connections 45.6 — within the same order of magnitude).
+- **Worst-case tail is where prequal loses badly.** Prequal's worst rep hit p95 = 154.56 ms, p99 = **1239 ms**, p99.9 = 2010 ms. Round-robin's worst rep topped out at p99 = 228 ms. Least-connections' worst was p99 = 498 ms. Under saturation with pool churn, prequal's HCL selection is making occasional catastrophic-tail choices that the baselines do not make.
+- **Per-backend selection confirms HCL is working correctly at steady-state.** Across the 5 prequal reps, the three fast backends get 188-212 sel/s each (~28% each); the slow backend gets 1.11 sel/s (<0.2%). The algorithm IS identifying and avoiding the slow replica. The tail regressions are not caused by wrong selections on average — they are caused by rare but catastrophic selections at transient pool staleness.
+- `random_fallback_rate = 0` throughout. Pool never starves.
+- Dashboard visual: 15 clean ramp sawtooths (one per run) with one prominent p95 spike to 1.25 s around 18:38 UTC (prequal's worst rep). Otherwise flat.
+
+**This does not invalidate the Prequal algorithm**, but it does mean our implementation does not reproduce the paper's tail-latency advantage in the 4-backend, CPU-bound, kind-local regime. Candidate regimes that might reveal it:
+
+- Larger backend fleet (16+). The paper's scenario had ~100 backends, where HCL's sample diversity dominates.
+- Larger capacity skew (`WORK_MULTIPLIER=8` or `16`). At 4× the fast/slow gap is already small relative to request variance.
+- I/O-bound workload instead of SHA256-CPU. The paper assumes probed latency reflects realistic service time; SHA256 is tightly CPU-bound.
+- Dedicated multi-node cluster (E-B) instead of single-host kind, which has shared noisy neighbours.
+
+**Not recommended next:** parameter tuning on the current regime. The median numbers are tied within noise; there is no "gap to close" that a QRIF/ReuseLimit sweep would help. The constraint is the regime, not the tuning.
 
 ## Campaign 4 — Multi-route isolation
 
