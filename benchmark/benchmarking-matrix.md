@@ -1,7 +1,12 @@
 # Prequal: Benchmarking Campaign Matrix
 
+> **Campaign state: FROZEN 2026-04-20.** Primary evidence is the **E-B C2 + C3** runs under the pivoted regime (16 IO-bound backends, capacity skew 16, controller isolated on control-plane). See [`REPORT.md`](REPORT.md) for the publishable summary.
+>
+> Previous E-A first-pass data (single-host kind with controller colocated on a worker) is preserved below as cross-environment background but is **not** the canonical result.
+
 Source documents:
 
+- [`benchmark/REPORT.md`](REPORT.md) — publishable summary (current claim + caveats)
 - [`benchmark/public-claim-playbook.md`](public-claim-playbook.md) section 5 (campaign definitions)
 - [`benchmark/evidence-asset-spec.md`](evidence-asset-spec.md) section 4.1 (matrix format)
 - [`benchmarking.md`](../benchmarking.md) section 20 (recommended execution order)
@@ -79,7 +84,7 @@ Purpose: main comparison set (uniform + heterogeneous, open-loop).
 | C2-het-rr      | heterogeneous-open-loop  | E-A         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json) |
 | C2-het-lc      | heterogeneous-open-loop  | E-A         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json) |
 
-### Campaign 2 pivot results (2026-04-20, E-A kind-local, 16 IO-bound backends, skew=16, 5 reps interleaved, pool reset between every run) — **prequal wins decisively**
+### Campaign 2 E-A first-pass (2026-04-20 pivot, E-A single-host kind with controller colocated, background evidence only — primary is E-B subsection below)
 
 Protocol: open-loop 500 rps × 300 s, `benchmark/manifests/workload-heterogeneous.yaml` scaled to **14 fast + 2 slow** with `WORK_MULTIPLIER=16.0` on slow and `IO_BOUND_MODE=1` on both. Backend uses `tokio::time::sleep(iterations × 50 µs)` instead of SHA256 → fast service time ~50 ms, slow ~800 ms. Controller reset + 15 s warmup before every run.
 
@@ -113,7 +118,7 @@ Per-backend selection rate for prequal (median across 5 reps):
 
 The two slow replicas are effectively blackholed. `random_fallback_rate = 0` — pool never starves.
 
-### Campaign 2 E-B cross-environment confirmation (2026-04-20, E-B kind multi-node, controller isolated on control-plane, backends spread across workers) — **prequal advantage reproduces**
+### **Campaign 2 PRIMARY EVIDENCE — E-B (2026-04-20, multi-node kind, controller isolated on control-plane, backends spread across workers)** — prequal p99 advantage 8.6× over both baselines
 
 Same protocol and topology as the 2026-04-20 E-A pivot above (500 rps × 300 s × 5 reps interleaved, 14 fast + 2 slow IO-bound, skew 16). Only difference: `prequal-controller` now runs on `kind-control-plane` (via toleration + nodeSelector) instead of colocated with backends on a worker; backend pods are spread evenly across `kind-worker` + `kind-worker2` via `topologySpreadConstraints`.
 
@@ -225,7 +230,7 @@ Purpose: where each algorithm breaks down.
 | C3-ramp-rr    | heterogeneous-ramp | E-A         | round-robin      | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
 | C3-ramp-lc    | heterogeneous-ramp | E-A         | least-connections| `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
 
-### Campaign 3 pivot results (2026-04-20, E-A kind-local, 16 IO-bound backends, skew=16, 5 reps interleaved) — **prequal wins decisively**
+### Campaign 3 E-A first-pass (2026-04-20 pivot, E-A single-host kind, background evidence only — primary is E-B subsection below)
 
 Same topology as C2 pivot; `rate_ramp.js` ramping 100→1500 rps over 370 s. Throughput tops out around 695 rps (fast pool saturation point: 14 fast replicas × ~50 ms per request × concurrency ≈ ~700 rps).
 
@@ -241,7 +246,7 @@ prequal p99 is **~7× better** than both baselines (117 vs ~803 ms). p99.9 is ti
 
 Screenshots: [`results/screenshots/2026-04-20-C3-pivot/`](results/screenshots/2026-04-20-C3-pivot/). Aggregate: [`results/aggregated/2026-04-20-C3-pivot-ramp.json`](results/aggregated/2026-04-20-C3-pivot-ramp.json).
 
-### Campaign 3 E-B cross-environment confirmation (2026-04-20, E-B kind multi-node, controller isolated) — **prequal advantage reproduces**
+### **Campaign 3 PRIMARY EVIDENCE — E-B (2026-04-20, multi-node kind, controller isolated)** — prequal p99 advantage 6.8× over both baselines
 
 Same rate-ramp protocol as the E-A pivot (100→1500 rps over 370 s, 5 reps interleaved, controller reset + 15 s warmup). Only the cluster topology differs.
 
