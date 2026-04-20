@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"instance":"host.docker.internal:31081","job":"prequal-controller","route_key":"prequal-benchmark/bench-heterogeneous:8080","status_code":"200"},"value":[1776668388.470,"484.1977014838522"]}]}}

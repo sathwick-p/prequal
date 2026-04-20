@@ -1,0 +1,6 @@
+===== bench-fast =====
+Found 14 pods, using pod/bench-fast-774b55c75f-qrk4f
+prequal-backend listening on 0.0.0.0:8080 fault_mode=None fault_timeout_ms=300000 fault_stale_offset_ms=10000 io_bound_mode=true io_bound_base_us=50
+===== bench-slow =====
+Found 2 pods, using pod/bench-slow-7d67bbc5c9-pxnnq
+prequal-backend listening on 0.0.0.0:8080 fault_mode=None fault_timeout_ms=300000 fault_stale_offset_ms=10000 io_bound_mode=true io_bound_base_us=50

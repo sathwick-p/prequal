@@ -1,0 +1,57 @@
+{
+  "run_id": "2026-04-20T07-29-20Z-heterogeneous-ramp-eb-least-connections",
+  "date_utc": "2026-04-20T07:29:21Z",
+  "git_sha": "ea8535dce033cbd0930cfe14f997bfd604b6611f",
+  "environment": "E-B-kind-multinode",
+  "scenario": "heterogeneous-ramp-eb",
+  "algorithm": "least-connections",
+  "duration_seconds": 0,
+  "target_rate_rps": 0,
+  "workload_manifest": "benchmark/manifests/workload-heterogeneous.yaml",
+  "load_script": "benchmark/k6/rate_ramp.js",
+  "controller_env": [
+    {
+      "name": "PREQUAL_BENCHMARK_MODE",
+      "value": "true"
+    },
+    {
+      "name": "PREQUAL_LOG_REQUESTS",
+      "value": "false"
+    },
+    {
+      "name": "PREQUAL_PROBE_WORKERS",
+      "value": "16"
+    },
+    {
+      "name": "PREQUAL_PROBE_QUEUE_SIZE",
+      "value": "4096"
+    },
+    {
+      "name": "PREQUAL_PROBES_PER_QUERY",
+      "value": "1.0"
+    },
+    {
+      "name": "PREQUAL_BACKGROUND_INTERVAL_MS",
+      "value": "100"
+    },
+    {
+      "name": "PREQUAL_POOL_MAX_AGE_MS",
+      "value": "1000"
+    },
+    {
+      "name": "PREQUAL_MAX_PROBE_AGE_MS",
+      "value": "2000"
+    },
+    {
+      "name": "PREQUAL_POOL_MAINTENANCE_INTERVAL_MS",
+      "value": "100"
+    }
+  ],
+  "backend_env": [
+    {
+      "name": "WORK_MULTIPLIER",
+      "value": "1.0"
+    }
+  ],
+  "notes": "E-B: controller isolated, 14 fast + 2 slow IO-bound skew=16, ramp 100->1500 rps, 5 reps interleaved; rep 1/5 algo=least-connections INTERLEAVED"
+}

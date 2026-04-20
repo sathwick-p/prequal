@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"prequal_pool_occupancy","instance":"host.docker.internal:31081","job":"prequal-controller","route_key":"prequal-benchmark/bench-heterogeneous:8080"},"value":[1776672533.924,"11"]}]}}

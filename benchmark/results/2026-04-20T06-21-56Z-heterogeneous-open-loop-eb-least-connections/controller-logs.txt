@@ -1,0 +1,59 @@
+2026/04/20 06:21:58 Watching all namespaces
+2026/04/20 06:21:58 Debug server listening on :8081 (pprof at /debug/pprof/)
+2026/04/20 06:21:58 Proxy server listening on :8080
+2026/04/20 06:21:58 Starting controller...
+2026/04/20 06:21:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:21:58 Cache synced, watching Ingresses...
+2026/04/20 06:21:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:21:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:21:58 [INGRESS] host: bench.local
+2026/04/20 06:21:58 [ROUTER] Added host: bench.local
+2026/04/20 06:21:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:22:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:22:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:22:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:22:58 [INGRESS] host: bench.local
+2026/04/20 06:22:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:22:58 [ROUTER] Added host: bench.local
+2026/04/20 06:22:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:23:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:23:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:23:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:23:58 [INGRESS] host: bench.local
+2026/04/20 06:23:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:23:58 [ROUTER] Added host: bench.local
+2026/04/20 06:23:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:24:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:24:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:24:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:24:58 [INGRESS] host: bench.local
+2026/04/20 06:24:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:24:58 [ROUTER] Added host: bench.local
+2026/04/20 06:24:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:25:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:25:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:25:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:25:58 [INGRESS] host: bench.local
+2026/04/20 06:25:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:25:58 [ROUTER] Added host: bench.local
+2026/04/20 06:25:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:25:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:25:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:25:58 [INGRESS] host: bench.local
+2026/04/20 06:25:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:25:58 [ROUTER] Added host: bench.local
+2026/04/20 06:25:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:26:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:26:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:26:58 [INGRESS] host: bench.local
+2026/04/20 06:26:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:26:58 [ROUTER] Added host: bench.local
+2026/04/20 06:26:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:26:58 [DEBUG] Added to queue: prequal-benchmark/bench-heterogeneous
+2026/04/20 06:26:58 [EVENT] Ingress prequal-benchmark/bench-heterogeneous triggered
+2026/04/20 06:26:58 [INGRESS] prequal-benchmark/bench-heterogeneous -> service: bench-heterogeneous
+2026/04/20 06:26:58 [INGRESS] host: bench.local
+2026/04/20 06:26:58 [ROUTER] Removed host: bench.local
+2026/04/20 06:26:58 [ROUTER] Added host: bench.local
+2026/04/20 06:26:58 [SYNC] prequal-benchmark/bench-heterogeneous:8080: [10.244.2.159:8080 10.244.2.160:8080 10.244.2.162:8080 10.244.2.161:8080 10.244.1.159:8080 10.244.1.161:8080 10.244.1.160:8080 10.244.1.158:8080 10.244.1.162:8080 10.244.2.163:8080 10.244.2.165:8080 10.244.2.164:8080 10.244.1.163:8080 10.244.1.164:8080 10.244.1.165:8080 10.244.2.166:8080]
+2026/04/20 06:27:15 [DEBUG] Making a copy for Debug server

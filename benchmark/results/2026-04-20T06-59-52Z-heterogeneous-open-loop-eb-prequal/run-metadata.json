@@ -1,0 +1,57 @@
+{
+  "run_id": "2026-04-20T06-59-52Z-heterogeneous-open-loop-eb-prequal",
+  "date_utc": "2026-04-20T06:59:53Z",
+  "git_sha": "ea8535dce033cbd0930cfe14f997bfd604b6611f",
+  "environment": "E-B-kind-multinode",
+  "scenario": "heterogeneous-open-loop-eb",
+  "algorithm": "prequal",
+  "duration_seconds": 300,
+  "target_rate_rps": 500,
+  "workload_manifest": "benchmark/manifests/workload-heterogeneous.yaml",
+  "load_script": "benchmark/k6/open_loop.js",
+  "controller_env": [
+    {
+      "name": "PREQUAL_BENCHMARK_MODE",
+      "value": "true"
+    },
+    {
+      "name": "PREQUAL_LOG_REQUESTS",
+      "value": "false"
+    },
+    {
+      "name": "PREQUAL_PROBE_WORKERS",
+      "value": "16"
+    },
+    {
+      "name": "PREQUAL_PROBE_QUEUE_SIZE",
+      "value": "4096"
+    },
+    {
+      "name": "PREQUAL_PROBES_PER_QUERY",
+      "value": "1.0"
+    },
+    {
+      "name": "PREQUAL_BACKGROUND_INTERVAL_MS",
+      "value": "100"
+    },
+    {
+      "name": "PREQUAL_POOL_MAX_AGE_MS",
+      "value": "1000"
+    },
+    {
+      "name": "PREQUAL_MAX_PROBE_AGE_MS",
+      "value": "2000"
+    },
+    {
+      "name": "PREQUAL_POOL_MAINTENANCE_INTERVAL_MS",
+      "value": "100"
+    }
+  ],
+  "backend_env": [
+    {
+      "name": "WORK_MULTIPLIER",
+      "value": "1.0"
+    }
+  ],
+  "notes": "E-B: controller isolated on kind-control-plane, backends spread across kind-worker/worker2, 14 fast + 2 slow IO-bound skew=16, 5 reps interleaved; rep 5/5 algo=prequal INTERLEAVED"
+}

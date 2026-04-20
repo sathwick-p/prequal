@@ -1,0 +1,1 @@
+{"bench.local":{"Host":"bench.local","Paths":[{"Path":"/work","PathType":"Prefix","Key":"prequal-benchmark/bench-heterogeneous:8080","Port":8080,"Algorithm":"prequal"}]}}

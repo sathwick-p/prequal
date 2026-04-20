@@ -1,0 +1,1 @@
+k6 run --summary-export=benchmark/results/2026-04-20T08-28-45Z-heterogeneous-ramp-eb-least-connections/k6-summary.json -e TARGET_URL=http://127.0.0.1:31080/work -e HOST_HEADER=bench.local -e WORK_ITERATIONS=1000 benchmark/k6/rate_ramp.js

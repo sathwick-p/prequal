@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"prequal_probe_queue_depth","instance":"host.docker.internal:31081","job":"prequal-controller"},"value":[1776669038.207,"0"]}]}}
