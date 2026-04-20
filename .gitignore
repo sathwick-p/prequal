@@ -31,6 +31,12 @@ go.work.sum
 bin/
 backend/target/
 backend/.omc/
+
+# Generated benchmark summaries and internal planning/reference artifacts
+summary-*.json
+plan.md
+arch.md
+prequal.pdf
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -1,5 +1,7 @@
 # Prequal: Benchmark Report (frozen 2026-04-20)
 
+This document is the **canonical technical conclusion** for the frozen benchmark campaign. Public-facing summaries should derive from this report and preserve its bounded claim language and caveats.
+
 This is the publishable summary of the prequal benchmark campaign as of 2026-04-20. The campaign is **frozen** at this point — no further runs are planned under the current scope. Everything below is backed by committed evidence in `benchmark/results/` and narrated in the investigation logs at `benchmark/investigations/`.
 
 ---

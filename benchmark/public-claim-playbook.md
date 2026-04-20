@@ -745,17 +745,34 @@ Not yet safe:
 
 ---
 
-## 18. Immediate Next Steps
+## 18. Current State And Next Strengthening Steps
 
-1. Add Prometheus and Grafana assets to the repo.
-2. Add result schema and archive scripts.
-3. Add long-duration and rate-ramp `k6` scripts.
-4. Add fault-injection manifests.
-5. Run the first full campaign:
-   - uniform
-   - heterogeneous
-   - multi-route
-   - churn
-6. Generate a first engineering report from raw data.
+The original evidence-buildout tasks in this playbook are no longer hypothetical. The repo now contains:
 
-Only after that should you decide whether the evidence is strong enough for a public writeup.
+- benchmark assets under `benchmark/`
+- Prometheus/Grafana-backed evidence capture
+- a frozen benchmark matrix
+- investigation logs for methodology, regime pivot, and profiling
+- a publishable summary in `benchmark/REPORT.md`
+
+That means this playbook should now be read as a publication standard and gap-analysis document, not as an execution checklist for the first campaign.
+
+Current evidence position:
+
+- strong engineering evidence exists for a bounded claim
+- the claim is regime-specific, not universal
+- the two-environment minimum is met on the current testbed
+- the biggest remaining caveat is that both environments still share the same underlying Docker host
+
+If you want to strengthen the claim further beyond the current frozen report, the highest-leverage next steps are:
+
+1. Reproduce the decisive `C2` and `C3` pivot runs on an independent cloud or bare-metal cluster.
+2. Add one external baseline run in the same paper-aligned regime.
+3. Add multi-route isolation evidence if route-scoped pool behavior will be part of the public claim.
+4. Add long-duration and churn evidence if the writeup wants to make robustness claims, not just comparison claims.
+
+If none of those are done, the correct public position is still:
+
+- validated on this testbed
+- reproducible across two same-host cluster topologies
+- not yet final cross-infrastructure proof

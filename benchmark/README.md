@@ -12,6 +12,11 @@ This directory contains reproducible benchmark assets for the ingress proxy:
 The full campaign plan (scenarios × algorithms × environments) is tracked in
 [`benchmark/benchmarking-matrix.md`](benchmarking-matrix.md).
 
+Frozen conclusion docs:
+
+- [`benchmark/REPORT.md`](REPORT.md) — canonical technical conclusion
+- [`benchmark/PUBLIC_WRITEUP.md`](PUBLIC_WRITEUP.md) — public-facing summary built from the frozen report
+
 ## Manifests
 
 - `benchmark/manifests/controller-benchmark.yaml`

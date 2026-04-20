@@ -218,6 +218,6 @@ This is **Claim-Level-B-adjacent evidence**: reproducible across two cluster top
 
 | Date (UTC) | Event | Commit |
 |------------|-------|--------|
-| 2026-04-20 05:54 - 07:16 | C2 heterogeneous-open-loop (E-B) | (pending) |
-| 2026-04-20 07:16 - 08:55 | C3 heterogeneous-ramp (E-B) | (pending) |
-| 2026-04-20 | E-B confirmation written, advantage confirmed | (pending) |
+| 2026-04-20 05:54 - 07:16 | C2 heterogeneous-open-loop (E-B) | completed |
+| 2026-04-20 07:16 - 08:55 | C3 heterogeneous-ramp (E-B) | completed |
+| 2026-04-20 | E-B confirmation written, advantage confirmed | completed |
