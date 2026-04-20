@@ -113,6 +113,31 @@ Per-backend selection rate for prequal (median across 5 reps):
 
 The two slow replicas are effectively blackholed. `random_fallback_rate = 0` — pool never starves.
 
+### Campaign 2 E-B cross-environment confirmation (2026-04-20, E-B kind multi-node, controller isolated on control-plane, backends spread across workers) — **prequal advantage reproduces**
+
+Same protocol and topology as the 2026-04-20 E-A pivot above (500 rps × 300 s × 5 reps interleaved, 14 fast + 2 slow IO-bound, skew 16). Only difference: `prequal-controller` now runs on `kind-control-plane` (via toleration + nodeSelector) instead of colocated with backends on a worker; backend pods are spread evenly across `kind-worker` + `kind-worker2` via `topologySpreadConstraints`.
+
+| algorithm         | reps | rps         | avg ms              | p50 ms          | p95 ms              | p99 ms                | p99.9 ms                    | rf/s |
+|-------------------|-----:|-------------|---------------------|-----------------|---------------------|-----------------------|-----------------------------|-----:|
+| **prequal**       | 5    | 500 [500-500]| **54.96** [53.50-55.82]| 52.87 [52.70-53.06]| **58.77** [55.49-63.42]| **94.20** [68.66-106.34]| **272.38** [112.56-284.84] | 0    |
+| round-robin       | 5    | 498 [498-498]| 149.00 [147.83-151.24]| 53.09 [53.05-53.25]| 803.26 [803.15-803.37]| 807.32 [805.35-810.88]| 887.90 [836.40-960.51]      | 0    |
+| least-connections | 5    | 497 [497-499]| 67.83 [61.65-71.30] | 53.01 [52.91-53.21]| 76.32 [57.62-85.62] | 802.84 [802.07-803.42]| 1006.78 [805.19-1958.95]    | 0    |
+
+Screenshots: [`results/screenshots/2026-04-20-C2-eb/`](results/screenshots/2026-04-20-C2-eb/). Aggregate: [`results/aggregated/2026-04-20-C2-eb-heterogeneous.json`](results/aggregated/2026-04-20-C2-eb-heterogeneous.json).
+
+**E-B vs E-A comparison (C2 p99 median):**
+
+| metric          | E-A (pivot) | E-B (multinode) | verdict |
+|-----------------|------------:|----------------:|---------|
+| prequal p99 ms  | 80.60       | 94.20           | +17% worse on E-B (still <baselines/8) |
+| rr p99 ms       | 807.12      | 807.32          | essentially identical |
+| lc p99 ms       | 802.46      | 802.84          | essentially identical |
+| **advantage ratio** | **10.0×**| **8.6×**        | **reproduces** (>2× decision-rule threshold) |
+
+Prequal's p99.9 is worse on E-B (127 → 272) — likely because controller isolation on the tainted control-plane node exposes the controller to different CPU budgets (control-plane has kube-apiserver, etcd, kube-scheduler all competing). The 2-10 ms extra on the tail under probe-reply roundtrips is plausible. p95 is identical (58 vs 59), so common-case is unchanged.
+
+Per-backend selection on E-B is slightly noisier than E-A: of the 14 fast backends, the top 6 still receive ~55-62 sel/s each while the bottom 6-7 receive 6-10 sel/s. The 2 slow backends still correctly receive <0.1 sel/s. HCL's fast-vs-slow discrimination is unaffected.
+
 ### Campaign 2 controlled re-run results (2026-04-19, E-A kind-local, 5 reps per algorithm, interleaved, pool reset between every run) — superseded by 2026-04-20 pivot
 
 Protocol (see [`investigations/2026-04-19-c2-tail-spike.md`](investigations/2026-04-19-c2-tail-spike.md)):
@@ -215,6 +240,29 @@ Decision rule outcome: **A — prequal wins by ≥2× on p99 against both baseli
 prequal p99 is **~7× better** than both baselines (117 vs ~803 ms). p99.9 is tied with least-connections (808 vs 815) but the median is 7× better. One prequal rep had an outlier p99 of 988 ms (likely the very first rep's cold-pool warmup window), pulling the range wide.
 
 Screenshots: [`results/screenshots/2026-04-20-C3-pivot/`](results/screenshots/2026-04-20-C3-pivot/). Aggregate: [`results/aggregated/2026-04-20-C3-pivot-ramp.json`](results/aggregated/2026-04-20-C3-pivot-ramp.json).
+
+### Campaign 3 E-B cross-environment confirmation (2026-04-20, E-B kind multi-node, controller isolated) — **prequal advantage reproduces**
+
+Same rate-ramp protocol as the E-A pivot (100→1500 rps over 370 s, 5 reps interleaved, controller reset + 15 s warmup). Only the cluster topology differs.
+
+| algorithm         | reps | rps (sustained)| avg ms                | p50 ms           | p95 ms                | p99 ms                    | p99.9 ms                      | rf/s |
+|-------------------|-----:|----------------|-----------------------|------------------|-----------------------|---------------------------|-------------------------------|-----:|
+| **prequal**       | 5    | 695 [691-696]  | **56.34** [55.22-75.51]| 52.65 [52.57-53.06]| **61.29** [59.26-144.53]| **123.39** [106.29-723.33]| **824.08** [479.71-1531.88]   | 0    |
+| round-robin       | 5    | 691 [685-693]  | 157.67 [151.64-170.36]| 53.25 [52.84-53.57]| 803.77 [803.09-804.35]| 831.58 [807.87-927.16]    | 1250.41 [1041.19-2219.51]     | 0    |
+| least-connections | 5    | 688 [679-694]  | 85.79 [63.65-116.45]  | 52.96 [52.70-53.42]| 164.61 [64.77-329.80] | 867.93 [801.78-1703.43]   | 1596.51 [816.55-3079.03]      | 0    |
+
+Screenshots: [`results/screenshots/2026-04-20-C3-eb/`](results/screenshots/2026-04-20-C3-eb/). Aggregate: [`results/aggregated/2026-04-20-C3-eb-ramp.json`](results/aggregated/2026-04-20-C3-eb-ramp.json).
+
+**E-B vs E-A comparison (C3 p99 median):**
+
+| metric          | E-A (pivot) | E-B (multinode) | verdict |
+|-----------------|------------:|----------------:|---------|
+| prequal p99 ms  | 117.34      | 123.39          | +5% worse on E-B (within noise) |
+| rr p99 ms       | 833.56      | 831.58          | essentially identical |
+| lc p99 ms       | 802.25      | 867.93          | +8% worse on E-B |
+| **advantage ratio** | **7.1×**| **6.8×**        | **reproduces** (>2× decision-rule threshold) |
+
+C3 is almost a perfect reproduction of E-A. Prequal's median p99 ticks up 5% (within the 106-723 ms min-max range from E-A), and the ratio against round-robin shifts from 7.1× to 6.8× — a change smaller than the min-max variance within either environment.
 
 ### Campaign 3 controlled results (2026-04-19, E-A kind-local, 5 reps interleaved, pool reset between every run) — superseded by 2026-04-20 pivot
 

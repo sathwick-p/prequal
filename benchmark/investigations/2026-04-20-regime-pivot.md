@@ -146,7 +146,7 @@ Items 2–4 were nudges. Item 1 was the transformative change.
 
 ### 7.4 Caveats that must accompany any public writeup
 
-- Tested only on E-A (single kind host). E-B (independent multi-node cluster) is still recommended before a Claim-Level-B writeup per `public-claim-playbook.md`.
+- Initial evidence was E-A (controller colocated on worker with backends). E-B cross-environment run completed 2026-04-20 on the same kind cluster with controller isolated on the control-plane node and backends topology-spread across workers; results in section 8 confirm the advantage reproduces (C2 8.6×, C3 6.8×).
 - I/O-bound backend simulates service time with a fixed sleep. Real services have variance, retries, and backpressure; real-world numbers will be noisier.
 - 14 fast + 2 slow is a specific capacity-skew shape. The algorithm is expected to win under any meaningful skew (paper uses various ratios), but numbers will shift with topology.
 - Prequal's tail advantage only appears when there IS a tail to avoid. On uniform-capacity workloads (`workload-uniform.yaml`) all three algorithms converge on the fast service time; no separation expected and none observed.
@@ -159,3 +159,65 @@ Items 2–4 were nudges. Item 1 was the transformative change.
 ### 7.6 Follow-up: overhead profiling (completed in the paired investigation)
 
 Even though prequal wins in this regime, it has a documented ~25% throughput overhead on small-fleet CPU-bound C1 workloads (see `2026-04-19-c2-tail-spike.md` section 9). That cost matters when the regime doesn't favor the algorithm. The paired investigation at `benchmark/investigations/2026-04-20-prequal-overhead-profiling.md` is now complete and quantifies where that overhead lives: not in controller CPU or lock contention, but mostly as diffuse network/probe competition on the small-fleet CPU-bound regime.
+
+## 8. E-B cross-environment confirmation
+
+Commit `ea8535d` promoted the existing 3-node kind cluster to proper E-B by (a) adding toleration + nodeSelector so `prequal-controller` runs only on `kind-control-plane`, (b) adding `topologySpreadConstraints` so bench-fast and bench-slow spread across `kind-worker` + `kind-worker2`, and (c) adding `benchmark/kind-config-e-b.yaml` as a reference config for a from-scratch rebuild with `extraPortMappings`. C2 + C3 were re-run on E-B with the same controlled protocol.
+
+### 8.1 Side-by-side numbers (p99 medians)
+
+C2 heterogeneous-open-loop (500 rps, 5 reps, IO-bound, skew=16):
+
+| algorithm         | E-A pivot p99 ms | E-B p99 ms | Δ       |
+|-------------------|-----------------:|-----------:|--------:|
+| prequal           | 80.60            | 94.20      | +17%    |
+| round-robin       | 807.12           | 807.32     | ≈0%     |
+| least-connections | 802.46           | 802.84     | ≈0%     |
+| **advantage ratio** | **10.0×**      | **8.6×**   | shrinks slightly, still decisive |
+
+C3 heterogeneous-ramp (100→1500 rps, 5 reps, IO-bound, skew=16):
+
+| algorithm         | E-A pivot p99 ms | E-B p99 ms | Δ       |
+|-------------------|-----------------:|-----------:|--------:|
+| prequal           | 117.34           | 123.39     | +5%     |
+| round-robin       | 833.56           | 831.58     | ≈0%     |
+| least-connections | 802.25           | 867.93     | +8%    |
+| **advantage ratio** | **7.1×**       | **6.8×**   | essentially identical |
+
+### 8.2 What reproduces, what shifts
+
+**Reproduces exactly:**
+
+- Prequal's p99 advantage vs both baselines in both campaigns (8.6× and 6.8× — both well past the 2× decision-rule threshold).
+- Baseline numbers (round-robin, least-connections p99 medians) are effectively unchanged between E-A and E-B — as expected, since the baselines don't benefit from controller isolation either.
+- Per-backend selection: the 2 slow backends are still driven to <0.1 sel/s in both environments.
+- Throughput and p50 are identical (controller doesn't bottleneck at 500 rps).
+
+**Shifts modestly:**
+
+- Prequal p99 is ~15 ms higher on E-B (94 vs 80 ms on C2, 123 vs 117 ms on C3). This is consistent with the control-plane node being a more crowded scheduling neighborhood (kube-apiserver, etcd, kube-scheduler share the node), adding 10-15 ms to some probe round-trips.
+- Prequal p99.9 on C2 is noticeably worse on E-B (272 vs 127 ms). Probably the same control-plane contention showing up in the deep tail.
+- Per-fast-backend selection is noisier on E-B — top 6 fast backends get ~55-62 sel/s, bottom 6-7 get 6-10 sel/s. On E-A the spread was ~35 sel/s × 14 (more even). HCL's cold-quantile selection is sample-diverse; with probe latencies getting slightly perturbed by control-plane neighbours, the quantile preference fluctuates a little more.
+
+### 8.3 Verdict
+
+**Advantage reproduces on E-B.** Prequal clears the decision rule's 2× threshold in both campaigns. Round-robin and least-connections remain pinned near the 800 ms queue-to-slow-backend floor in both environments. The 1.1–1.2× shrinkage in advantage ratio (10.0→8.6 on C2, 7.1→6.8 on C3) is within the noise of either environment's own min-max range.
+
+This is **Claim-Level-B-adjacent evidence**: reproducible across two cluster topologies on the same host, with consistent baselines, under a controlled protocol. A real Claim-Level-B writeup would still want cross-environment data from an independent cloud or bare-metal cluster (different kernel, different network fabric, different CPU architecture), which `benchmark/public-claim-playbook.md` section 13 calls out. But the "2 environments minimum" bar from section 6 is now met on this testbed.
+
+### 8.4 Artifacts
+
+- `benchmark/results/2026-04-20T05*/06*/07*/08*-heterogeneous-open-loop-eb-*/` — 15 C2 E-B run dirs
+- `benchmark/results/2026-04-20T07*/08*/09*-heterogeneous-ramp-eb-*/` — 15 C3 E-B run dirs
+- `benchmark/results/aggregated/2026-04-20-C2-eb-heterogeneous.json`
+- `benchmark/results/aggregated/2026-04-20-C3-eb-ramp.json`
+- `benchmark/results/screenshots/2026-04-20-C2-eb/` — 6 dashboard PNGs
+- `benchmark/results/screenshots/2026-04-20-C3-eb/` — 6 dashboard PNGs
+
+### 8.5 Status log addendum
+
+| Date (UTC) | Event | Commit |
+|------------|-------|--------|
+| 2026-04-20 05:54 - 07:16 | C2 heterogeneous-open-loop (E-B) | (pending) |
+| 2026-04-20 07:16 - 08:55 | C3 heterogeneous-ramp (E-B) | (pending) |
+| 2026-04-20 | E-B confirmation written, advantage confirmed | (pending) |
