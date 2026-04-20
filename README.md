@@ -20,6 +20,8 @@ I'm not claiming `prequal` is a universal improvement, I'm not claiming same-hos
 
 The locked-down technical conclusion lives at [`benchmark/REPORT.md`](benchmark/REPORT.md). Longer narrative in [`TECHNICAL_BLOG.md`](TECHNICAL_BLOG.md). Short public summary in [`benchmark/PUBLIC_WRITEUP.md`](benchmark/PUBLIC_WRITEUP.md).
 
+![prequal System Overview](benchmark/diagrams/system-overview.png)
+
 ## Headline numbers
 
 ### `C2` heterogeneous open-loop, `E-B`, `500` rps, `300s`, 5 reps
@@ -43,6 +45,8 @@ Per-backend selection data shows the mechanism. `prequal` drives traffic to the 
 ## How the algorithm works here
 
 `prequal` picks backends from two signals the backends report: requests-in-flight and a median-latency estimate. Selection is hot-cold lexicographic. Within the cold RIF quantile it picks the lowest-latency backend. If everyone is hot, it picks the least loaded.
+
+![How prequal Chooses a Backend](benchmark/diagrams/backend-selection.png)
 
 ![Algorithm behavior, C2-eb](benchmark/results/screenshots/2026-04-20-C2-eb/algorithm-behavior.png)
 
@@ -71,6 +75,8 @@ The negative result is in the repo on purpose. `prequal` is regime-specific, not
 ## What makes this repo different
 
 Most "here's my Prequal implementation" repos publish the algorithm and the happy-path numbers. A few things this one does that most don't.
+
+![Benchmark Story: From Wrong Result to Bounded Conclusion](benchmark/diagrams/benchmarking.png)
 
 First, the methodology story is all here. An early 3-rep sequential `C2` run made `prequal` look catastrophically worse than both baselines, 10x worse, in the opposite direction of the paper's claim. The obvious move was to go hunting for bugs in HCL. That would have been the wrong move. The actual cause was pool-state leakage between sequential runs, and the whole trail of competing hypotheses is in [`benchmark/investigations/2026-04-19-c2-tail-spike.md`](benchmark/investigations/2026-04-19-c2-tail-spike.md). The controlled protocol that came out of it (interleaved algorithm order, `kubectl rollout restart` before every run, `15s` warmup) is in [`benchmark/scripts/run_interleaved_campaign.sh`](benchmark/scripts/run_interleaved_campaign.sh). Anyone trying to reproduce this needs that protocol or they'll get garbage.
 
