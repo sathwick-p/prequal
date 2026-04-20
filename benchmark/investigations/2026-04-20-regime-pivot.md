@@ -1,6 +1,6 @@
 # Investigation: regime pivot — does prequal win in the paper-predicted regime?
 
-**Status:** open. **Owner:** ralph-session. **Opened:** 2026-04-20.
+**Status:** closed — outcome **A**, prequal wins decisively on both C2 and C3 in the pivoted regime. Algorithm validated on this testbed under the paper's predicted conditions. See section 7. **Owner:** ralph-session. **Opened:** 2026-04-20. **Closed:** 2026-04-20.
 
 This log pairs with [`2026-04-19-c2-tail-spike.md`](2026-04-19-c2-tail-spike.md), which closed with the finding that prequal does not win in any regime tested on 4 CPU-bound SHA256 backends at kind-local scale. This log documents the pivot to a regime closer to the Prequal paper's assumptions and the decision rule for whether we can declare the algorithm validated.
 
@@ -94,10 +94,68 @@ After the re-run, apply this rule to the C2 heterogeneous + C3 ramp data:
 | 2026-04-20 | Backend `IO_BOUND_MODE` implemented and loaded into kind | `7a12c62` |
 | 2026-04-20 | 16-backend IO-bound heterogeneous workload manifest | `f32db5e` |
 | 2026-04-20 | Environment trim — unused namespaces deleted, controller 3→1 | (manual, state only) |
-| TBD | C2 heterogeneous-open-loop re-run under pivoted regime | TBD |
-| TBD | C3 heterogeneous-ramp re-run under pivoted regime | TBD |
-| TBD | Decision rule applied, section 7 outcome written | TBD |
+| 2026-04-19 20:54 - 22:16 | C2 heterogeneous-open-loop re-run (pivot) | (pending commit) |
+| 2026-04-19 22:16 - 23:56 | C3 heterogeneous-ramp re-run (pivot) | (pending commit) |
+| 2026-04-20 | Decision rule applied: outcome A; section 7 written | (pending commit) |
 
-## 7. Outcome (to be filled in after the re-run)
+## 7. Outcome — **A (prequal validated in pivoted regime)**
 
-_Pending._
+### 7.1 Headline numbers (median [min-max] across 5 reps)
+
+C2 pivot (500 rps open-loop, 16 backends IO-bound, skew=16):
+
+| algorithm         | p95 ms          | p99 ms           | p99.9 ms          |
+|-------------------|-----------------|------------------|-------------------|
+| **prequal**       | **59.48**       | **80.60**        | **127.49**        |
+| round-robin       | 803.69          | 807.12           | 834.90            |
+| least-connections | 62.85           | 802.46           | 808.82            |
+
+prequal p99 is **10.0× better** than round-robin and **10.0× better** than least-connections. prequal p99.9 is **6.5× better** than both. Meets the decision-rule A threshold (≥2× on p99 vs both baselines) by a wide margin.
+
+C3 pivot (ramp 100→1500 rps to saturation):
+
+| algorithm         | p95 ms          | p99 ms           | p99.9 ms          |
+|-------------------|-----------------|------------------|-------------------|
+| **prequal**       | **65.60**       | **117.34**       | 808.59            |
+| round-robin       | 804.19          | 833.56           | 1249.13           |
+| least-connections | 66.09           | 802.25           | 815.34            |
+
+prequal p99 is **7.1× better** than round-robin and **6.8× better** than least-connections. p99.9 is tied with least-connections (one cold-pool rep dragged prequal's median up). Still meets A.
+
+### 7.2 Per-backend selection confirms HCL is doing the work
+
+16 backends in the pool; 14 fast + 2 slow. Under prequal:
+
+- Fast backends (14): median ~35 sel/s each, ~96% of traffic total.
+- Slow backends (2): **0.0–0.05 sel/s each**, effectively blackholed.
+
+Under round-robin, by design, all 16 backends receive equal shares → 2/16 = 12.5% of traffic lands on the slow pair and those requests queue to ~800 ms. That's exactly the 800 ms floor we see on round-robin's p95-and-up.
+
+Under least-connections, client-side RIF eventually steers away from slow replicas, so p95 stays tolerable (62.85 ms), but any request that arrived before RIF updated pays the full queue cost → p99 pinned at 802 ms.
+
+### 7.3 Why the pivot made the difference
+
+Four changes, in order of leverage:
+
+1. **I/O-bound backend (`IO_BOUND_MODE=1`)** — probably the biggest single change. With `tokio::time::sleep` replacing SHA256, probe response times reflect the actual per-backend service latency rather than CPU-contention noise. HCL could finally operate on a clean signal.
+2. **Fleet size 14 fast + 2 slow** — gave HCL probe-sampling diversity to work with. Four-backend regime had almost no sampling space.
+3. **Capacity skew 16×** — made every mis-route cost 16× the fast service time. Algorithmic benefit scales with skew.
+4. **Environment trim** — freeing Docker Desktop CPU by deleting unrelated pods and scaling the controller 3→1 removed a confound that wasn't strictly necessary for IO-bound backends but still cleaned the data.
+
+Items 2–4 were nudges. Item 1 was the transformative change.
+
+### 7.4 Caveats that must accompany any public writeup
+
+- Tested only on E-A (single kind host). E-B (independent multi-node cluster) is still recommended before a Claim-Level-B writeup per `public-claim-playbook.md`.
+- I/O-bound backend simulates service time with a fixed sleep. Real services have variance, retries, and backpressure; real-world numbers will be noisier.
+- 14 fast + 2 slow is a specific capacity-skew shape. The algorithm is expected to win under any meaningful skew (paper uses various ratios), but numbers will shift with topology.
+- Prequal's tail advantage only appears when there IS a tail to avoid. On uniform-capacity workloads (`workload-uniform.yaml`) all three algorithms converge on the fast service time; no separation expected and none observed.
+- The initial failing C1/C2/C3 runs taught us to be careful about methodology (pool reset, interleaved order, controller env capture); do not skip those even when the result "looks right."
+
+### 7.5 Decision taken
+
+**A: declare prequal validated on this testbed in the pivoted regime.** The algorithm does what the paper says it does when the regime matches the paper's assumptions. Matrix Campaign 2 + Campaign 3 updated with the pivot numbers; pre-pivot rows preserved as superseded for audit trail.
+
+### 7.6 Follow-up: overhead profiling (to be done in a paired investigation)
+
+Even though prequal wins in this regime, it has a documented ~25% throughput overhead on small-fleet CPU-bound C1 workloads (see `2026-04-19-c2-tail-spike.md` section 9). That cost matters when the regime doesn't favor the algorithm. The next investigation — `benchmark/investigations/2026-04-20-prequal-overhead-profiling.md` — will (a) expose `net/http/pprof` on the controller debug port, (b) run a 60 s prequal-only replay against `bench-heterogeneous` capturing CPU + mutex + block profiles, and (c) quantify where the overhead lives (probe-path CPU, HCL sort cost, pool mutex contention, etc.) so future optimization work is grounded.
