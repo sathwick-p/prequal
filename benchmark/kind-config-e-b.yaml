@@ -1,0 +1,27 @@
+# E-B Reference Cluster Config
+#
+# NOTE: The CURRENT running cluster was brought up WITHOUT this config and is
+# retained in-place to preserve the evidence chain. This file exists solely for
+# anyone who needs to recreate the E-B topology from scratch.
+#
+# To recreate:
+#   kind create cluster --name kind --config benchmark/kind-config-e-b.yaml
+#
+# E-B topology:
+#   - 1 control-plane node: runs prequal-controller only (toleration + nodeSelector in controller manifest)
+#   - 2 worker nodes: run backend pods, spread evenly via topologySpreadConstraints
+#   - NodePort 31080 (proxy) and 31081 (debug) mapped to host, eliminating port-forward dependency
+#
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 31080
+    hostPort: 31080
+    protocol: TCP
+  - containerPort: 31081
+    hostPort: 31081
+    protocol: TCP
+- role: worker
+- role: worker

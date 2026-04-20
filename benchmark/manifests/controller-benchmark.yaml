@@ -43,7 +43,7 @@ metadata:
   name: prequal-controller
   namespace: prequal-benchmark
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: prequal-controller
@@ -53,6 +53,12 @@ spec:
         app: prequal-controller
     spec:
       serviceAccountName: prequal-controller
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
       containers:
       - name: controller
         image: prequal:latest

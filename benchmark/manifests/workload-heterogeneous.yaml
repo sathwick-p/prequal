@@ -16,6 +16,13 @@ spec:
         app: bench-fast
         app.kubernetes.io/part-of: bench-heterogeneous
     spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: bench-fast
       containers:
       - name: backend
         image: prequal-backend:latest
@@ -53,6 +60,13 @@ spec:
         app: bench-slow
         app.kubernetes.io/part-of: bench-heterogeneous
     spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: bench-slow
       containers:
       - name: backend
         image: prequal-backend:latest

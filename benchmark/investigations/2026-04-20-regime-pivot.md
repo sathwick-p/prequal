@@ -90,13 +90,13 @@ After the re-run, apply this rule to the C2 heterogeneous + C3 ramp data:
 | Date (UTC) | Event | Commit |
 |------------|-------|--------|
 | 2026-04-19 | C1 / C2 / C3 closed with prequal not winning in any tested regime | `31395cd` |
-| 2026-04-20 | Regime pivot opened — this file | (pending commit) |
+| 2026-04-20 | Regime pivot opened — this file | `2a8c9dc` |
 | 2026-04-20 | Backend `IO_BOUND_MODE` implemented and loaded into kind | `7a12c62` |
 | 2026-04-20 | 16-backend IO-bound heterogeneous workload manifest | `f32db5e` |
 | 2026-04-20 | Environment trim — unused namespaces deleted, controller 3→1 | (manual, state only) |
-| 2026-04-19 20:54 - 22:16 | C2 heterogeneous-open-loop re-run (pivot) | (pending commit) |
-| 2026-04-19 22:16 - 23:56 | C3 heterogeneous-ramp re-run (pivot) | (pending commit) |
-| 2026-04-20 | Decision rule applied: outcome A; section 7 written | (pending commit) |
+| 2026-04-19 20:54 - 22:16 | C2 heterogeneous-open-loop re-run (pivot) | `a60769d` |
+| 2026-04-19 22:16 - 23:56 | C3 heterogeneous-ramp re-run (pivot) | `a60769d` |
+| 2026-04-20 | Decision rule applied: outcome A; section 7 written | `d84c22a` |
 
 ## 7. Outcome — **A (prequal validated in pivoted regime)**
 
@@ -156,6 +156,6 @@ Items 2–4 were nudges. Item 1 was the transformative change.
 
 **A: declare prequal validated on this testbed in the pivoted regime.** The algorithm does what the paper says it does when the regime matches the paper's assumptions. Matrix Campaign 2 + Campaign 3 updated with the pivot numbers; pre-pivot rows preserved as superseded for audit trail.
 
-### 7.6 Follow-up: overhead profiling (to be done in a paired investigation)
+### 7.6 Follow-up: overhead profiling (completed in the paired investigation)
 
-Even though prequal wins in this regime, it has a documented ~25% throughput overhead on small-fleet CPU-bound C1 workloads (see `2026-04-19-c2-tail-spike.md` section 9). That cost matters when the regime doesn't favor the algorithm. The next investigation — `benchmark/investigations/2026-04-20-prequal-overhead-profiling.md` — will (a) expose `net/http/pprof` on the controller debug port, (b) run a 60 s prequal-only replay against `bench-heterogeneous` capturing CPU + mutex + block profiles, and (c) quantify where the overhead lives (probe-path CPU, HCL sort cost, pool mutex contention, etc.) so future optimization work is grounded.
+Even though prequal wins in this regime, it has a documented ~25% throughput overhead on small-fleet CPU-bound C1 workloads (see `2026-04-19-c2-tail-spike.md` section 9). That cost matters when the regime doesn't favor the algorithm. The paired investigation at `benchmark/investigations/2026-04-20-prequal-overhead-profiling.md` is now complete and quantifies where that overhead lives: not in controller CPU or lock contention, but mostly as diffuse network/probe competition on the small-fleet CPU-bound regime.

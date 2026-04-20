@@ -125,12 +125,12 @@ C3 (ramp), C4 (multi-route), C5 (long-duration), C6 (overload), C7 (churn), C8 (
 | 2026-04-19 09:30-10:16 | C2 heterogeneous-open-loop 3-rep — prequal loses tail medians | `e5e1232` |
 | 2026-04-19 evening | Investigation opened; revised protocol drafted | `e8e68df` |
 | 2026-04-19 | Runner + collector patches (env capture, pool reset, interleaved wrapper, 2 new range queries) | `9918748` |
-| 2026-04-19 12:16-13:37 | C2-controlled-uniform-open-loop 5-rep interleaved | (pending commit) |
-| 2026-04-19 13:38-14:55 | C2-controlled-heterogeneous-open-loop 5-rep interleaved | (pending commit) |
+| 2026-04-19 12:16-13:37 | C2-controlled-uniform-open-loop 5-rep interleaved | `96cf60c` |
+| 2026-04-19 13:38-14:55 | C2-controlled-heterogeneous-open-loop 5-rep interleaved | `96cf60c` |
 | 2026-04-19 | Root-cause close-out — see section 8 | `321adba` |
 | — | Parameter sweep — **not needed**; gap closed without changing defaults | — |
-| 2026-04-19 17:47-18:08 | C1-controlled-uniform-smoke 5-rep interleaved — prequal LOSES on throughput (≈25% behind RR) and on every summary percentile | (pending commit) |
-| 2026-04-19 18:09-19:49 | C3-heterogeneous-ramp 100→1500 rps 5-rep interleaved — medians tied; prequal's worst-case tail is ≈5× worse than RR, otherwise tied | (pending commit) |
+| 2026-04-19 17:47-18:08 | C1-controlled-uniform-smoke 5-rep interleaved — prequal LOSES on throughput (≈25% behind RR) and on every summary percentile | `f4f62c5` |
+| 2026-04-19 18:09-19:49 | C3-heterogeneous-ramp 100→1500 rps 5-rep interleaved — medians tied; prequal's worst-case tail is ≈5× worse than RR, otherwise tied | `f4f62c5` |
 
 ## 9. Post-closure finding: prequal doesn't win in any tested regime
 
@@ -230,13 +230,12 @@ The controlled protocol is now the default for any serious benchmark run:
 - `collect_results.sh` captures `backend_selection_rate-range.json` and `selection_algorithm_rate-range.json` per run.
 - `random_fallback_rate.json` is snapshotted post-run.
 
-C1 (which was run with 3 sequential reps and no pool reset) should be re-run under the same protocol before any public claim is made. C3-C9 were paused pending this investigation; they can now proceed using the controlled protocol.
+The original 3-rep sequential `C1` pass has now been superseded by the controlled 5-rep rerun recorded in `f4f62c5`, and `C3` has also been completed under the same protocol. The controlled protocol remains mandatory for any downstream campaigns.
 
 ### 8.7 Next step
 
 Not a parameter sweep. Not an algorithm-fidelity fix. Instead:
 
-1. Re-run **C1** with the controlled protocol (5 reps, interleaved, pool reset). One sitting, ~82 min. Matches the standard.
-2. Run **C3 saturation ramp** on heterogeneous — this is the scenario most likely to show prequal's paper-predicted advantage.
-3. Run **C4 multi-route isolation** — validates route-scoped pools now that we're confident in the single-route algorithm.
-4. Continue down the matrix in the order recommended in `benchmarking.md` section 20.
+1. Treat this investigation as closed history and use the controlled protocol as the baseline methodology.
+2. Refer to `benchmark/investigations/2026-04-20-regime-pivot.md` for the regime-pivot outcome that validated `prequal` under a paper-aligned workload.
+3. Continue with `C4+` only if the goal is robustness and broader evidence, not resolving the original C2 tail-spike question.

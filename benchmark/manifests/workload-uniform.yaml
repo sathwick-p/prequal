@@ -14,6 +14,13 @@ spec:
       labels:
         app: bench-uniform
     spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: bench-uniform
       containers:
       - name: backend
         image: prequal-backend:latest

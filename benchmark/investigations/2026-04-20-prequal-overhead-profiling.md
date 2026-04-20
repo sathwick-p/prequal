@@ -8,7 +8,7 @@ Pairs with [`2026-04-20-regime-pivot.md`](2026-04-20-regime-pivot.md) (outcome A
 
 ## 1. Method
 
-- Patched `debug.go` to import `_ "net/http/pprof"` and call `runtime.SetBlockProfileRate(1)` + `runtime.SetMutexProfileFraction(1)` at startup. Build: commit `(pending)`.
+- Patched `debug.go` to import `_ "net/http/pprof"` and call `runtime.SetBlockProfileRate(1)` + `runtime.SetMutexProfileFraction(1)` at startup. Build: commit `af1f568`.
 - Rebuilt the controller image, loaded into kind, `kubectl rollout restart deploy/prequal-controller`.
 - Ran a single 60 s `prequal`-only `open_loop.js` replay at 500 rps against the `bench-heterogeneous` workload (14 fast + 2 slow IO-bound backends, same as the C2 pivot).
 - Captured in parallel (profiling the middle 30 s of the 60 s run):
@@ -127,11 +127,11 @@ This characterises the overhead well enough to stop. The next engineering levers
 
 | Date (UTC) | Event | Commit |
 |------------|-------|--------|
-| 2026-04-20 | `debug.go` patched with pprof + mutex/block profiling | (this commit) |
+| 2026-04-20 | `debug.go` patched with pprof + mutex/block profiling | `af1f568` |
 | 2026-04-20 | Controller rebuilt + rollout-restarted | — |
 | 2026-04-20 | 60 s prequal replay; profiles captured (cpu, mutex, block, heap, goroutine) | — |
 | 2026-04-20 | Profiles analysed with `go tool pprof -top -nodecount=20` | — |
-| 2026-04-20 | Investigation closed; findings recorded | (this commit) |
+| 2026-04-20 | Investigation closed; findings recorded | `af1f568` |
 
 ## 10. Outcome
 
