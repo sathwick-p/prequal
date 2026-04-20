@@ -1,0 +1,1 @@
+k6 run --summary-export=benchmark/results/2026-04-19T21-32-52Z-heterogeneous-open-loop-pivot-round-robin/k6-summary.json -e TARGET_URL=http://127.0.0.1:31080/work -e HOST_HEADER=bench.local -e DURATION=300s -e RATE=500 -e WORK_ITERATIONS=1000 benchmark/k6/open_loop.js

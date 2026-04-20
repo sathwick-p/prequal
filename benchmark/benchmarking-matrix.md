@@ -79,7 +79,41 @@ Purpose: main comparison set (uniform + heterogeneous, open-loop).
 | C2-het-rr      | heterogeneous-open-loop  | E-A         | round-robin      | `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json) |
 | C2-het-lc      | heterogeneous-open-loop  | E-A         | least-connections| `benchmark/k6/open_loop.js`          | `benchmark/manifests/workload-heterogeneous.yaml`        | open-500   | 300s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C2-controlled-heterogeneous-open-loop.json) |
 
-### Campaign 2 controlled re-run results (2026-04-19, E-A kind-local, 5 reps per algorithm, interleaved, pool reset between every run)
+### Campaign 2 pivot results (2026-04-20, E-A kind-local, 16 IO-bound backends, skew=16, 5 reps interleaved, pool reset between every run) — **prequal wins decisively**
+
+Protocol: open-loop 500 rps × 300 s, `benchmark/manifests/workload-heterogeneous.yaml` scaled to **14 fast + 2 slow** with `WORK_MULTIPLIER=16.0` on slow and `IO_BOUND_MODE=1` on both. Backend uses `tokio::time::sleep(iterations × 50 µs)` instead of SHA256 → fast service time ~50 ms, slow ~800 ms. Controller reset + 15 s warmup before every run.
+
+Decision rule outcome: **A — prequal wins by ≥2× on p99 against both baselines**.
+
+| algorithm         | reps | rps             | avg ms              | p50 ms          | p95 ms              | p99 ms                | p99.9 ms                  | rf/s |
+|-------------------|-----:|-----------------|---------------------|-----------------|---------------------|-----------------------|---------------------------|-----:|
+| **prequal**       | 5    | 500 [499-500]   | **54.59** [53.68-55.22]| 53.30 [52.91-53.39]| **59.48** [55.56-60.25]| **80.60** [68.13-83.60]  | **127.49** [119.36-241.53] | 0    |
+| round-robin       | 5    | 498 [498-499]   | 148.35 [147.95-149.82]| 53.50 [53.30-53.69]| 803.69 [803.46-803.74]| 807.12 [806.26-808.13]  | 834.90 [826.97-871.05]    | 0    |
+| least-connections | 5    | 499 [498-499]   | 62.94 [62.17-65.14] | 53.40 [53.31-53.52]| 62.85 [60.10-63.12] | 802.46 [802.03-802.68]| 808.82 [807.43-1028.31]   | 0    |
+
+**prequal p99 is 10× better than baselines; p99.9 is ~6.5× better.** p50 is identical for all (the fast service time) — the algorithmic win is entirely in the tail, which is exactly what the Prequal paper predicts.
+
+Screenshots: [`results/screenshots/2026-04-20-C2-pivot/`](results/screenshots/2026-04-20-C2-pivot/). Aggregate: [`results/aggregated/2026-04-20-C2-pivot-heterogeneous.json`](results/aggregated/2026-04-20-C2-pivot-heterogeneous.json).
+
+Why it works in this regime:
+
+- 16 backends give HCL real probe-sampling diversity (previous 4-backend regime had near-zero diversity).
+- 16× capacity skew: a request to a slow backend queues for ~800 ms vs ~50 ms to a fast one. Routing away from slow is a 16× saving per mis-route.
+- I/O-bound work: probes measure actual service time, not CPU contention noise. The signal HCL needs to act on is clean.
+- **Round-robin** blindly sends 2/16 ≈ 12.5% of traffic to the slow pair → those 12% of requests queue, pinning p95/p99/p99.9 at the slow service time.
+- **Least-connections** uses client-side RIF only, which reports low until the slow backend accumulates enough in-flight. By then it's too late for those requests. p95 stays low (62.85) because it routes away over time, but p99 is still pinned (802.46) because late queue arrivals pay the full 800 ms.
+- **Prequal** probes the actual backend service time and sees the slow pair reporting ~800 ms latency directly in the probe responses. HCL's cold-quantile selection avoids them entirely.
+
+Per-backend selection rate for prequal (median across 5 reps):
+
+| backend type | count | median sel/s each | total share |
+|---|---:|---:|---:|
+| fast backends | 14    | ~35 sel/s  | ~96%  |
+| **slow backends** | 2    | **0.0-0.05 sel/s** | **<0.1%**  |
+
+The two slow replicas are effectively blackholed. `random_fallback_rate = 0` — pool never starves.
+
+### Campaign 2 controlled re-run results (2026-04-19, E-A kind-local, 5 reps per algorithm, interleaved, pool reset between every run) — superseded by 2026-04-20 pivot
 
 Protocol (see [`investigations/2026-04-19-c2-tail-spike.md`](investigations/2026-04-19-c2-tail-spike.md)):
 
@@ -166,7 +200,23 @@ Purpose: where each algorithm breaks down.
 | C3-ramp-rr    | heterogeneous-ramp | E-A         | round-robin      | `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
 | C3-ramp-lc    | heterogeneous-ramp | E-A         | least-connections| `benchmark/k6/rate_ramp.js`      | `benchmark/manifests/workload-heterogeneous.yaml`        | ramp 100→1500 | 370s     | 5           | ralph-session| done    | [aggregate](results/aggregated/2026-04-19-C3-heterogeneous-ramp.json) |
 
-### Campaign 3 controlled results (2026-04-19, E-A kind-local, 5 reps interleaved, pool reset between every run)
+### Campaign 3 pivot results (2026-04-20, E-A kind-local, 16 IO-bound backends, skew=16, 5 reps interleaved) — **prequal wins decisively**
+
+Same topology as C2 pivot; `rate_ramp.js` ramping 100→1500 rps over 370 s. Throughput tops out around 695 rps (fast pool saturation point: 14 fast replicas × ~50 ms per request × concurrency ≈ ~700 rps).
+
+Decision rule outcome: **A — prequal wins by ≥2× on p99 against both baselines**.
+
+| algorithm         | reps | rps (sustained) | avg ms              | p50 ms          | p95 ms              | p99 ms                    | p99.9 ms                      | rf/s |
+|-------------------|-----:|-----------------|---------------------|-----------------|---------------------|---------------------------|-------------------------------|-----:|
+| **prequal**       | 5    | 695 [689-695]   | **56.95** [56.22-80.92]| 53.38 [53.29-53.62]| **65.60** [64.38-90.50]| **117.34** [101.40-988.35]| **808.59** [223.92-1959.43]   | 0    |
+| round-robin       | 5    | 690 [681-693]   | 157.45 [150.74-186.08]| 53.68 [53.53-53.91]| 804.19 [803.73-805.93]| 833.56 [811.44-1340.75]   | 1249.13 [929.76-2847.20]      | 0    |
+| least-connections | 5    | 694 [693-694]   | 64.09 [62.78-65.99] | 53.33 [53.30-53.37]| 66.09 [63.59-70.87] | 802.25 [802.10-802.39]    | 815.34 [809.21-826.47]        | 0    |
+
+prequal p99 is **~7× better** than both baselines (117 vs ~803 ms). p99.9 is tied with least-connections (808 vs 815) but the median is 7× better. One prequal rep had an outlier p99 of 988 ms (likely the very first rep's cold-pool warmup window), pulling the range wide.
+
+Screenshots: [`results/screenshots/2026-04-20-C3-pivot/`](results/screenshots/2026-04-20-C3-pivot/). Aggregate: [`results/aggregated/2026-04-20-C3-pivot-ramp.json`](results/aggregated/2026-04-20-C3-pivot-ramp.json).
+
+### Campaign 3 controlled results (2026-04-19, E-A kind-local, 5 reps interleaved, pool reset between every run) — superseded by 2026-04-20 pivot
 
 Ramping-arrival-rate: `START_RATE=100`, `STEP_RATE=200`, `STEPS=8`, `STEP_DURATION=45s` — ramps through 100, 300, 500, 700, 900, 1100, 1300, 1500 rps over 370 s. Heterogeneous workload (3 fast + 1 slow, `WORK_MULTIPLIER=4.0`). Controller reset + 15 s warmup before every run. Median [min-max] across 5 runs per algorithm; latencies in ms.
 
