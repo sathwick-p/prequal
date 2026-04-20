@@ -4,6 +4,11 @@ This post explains what `prequal` is, how the controller is built, how the bench
 
 It is a technical narrative for the repo, not a paper. The canonical frozen benchmark conclusion is still [benchmark/REPORT.md](benchmark/REPORT.md).
 
+If you want to start with the original research:
+
+- Paper page: [USENIX NSDI 2024](https://www.usenix.org/conference/nsdi24/presentation/wydrowski)
+- Paper PDF: [Load is not what you should balance: Introducing Prequal](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)
+
 ## Why Build This
 
 Most ingress controllers ship with simple policies like round-robin or least-connections. Those policies are often good enough, but they are also blind to an important class of problems:
@@ -138,6 +143,10 @@ This is the negative result that keeps the repo honest.
 
 It also explains an important design point: if backend diversity is low and the signal is noisy, a more complex policy has less room to beat a simpler one.
 
+![C1 Controlled Request Overview](benchmark/results/screenshots/2026-04-19-C1-controlled/request-overview.png)
+
+![C1 Controlled Resources](benchmark/results/screenshots/2026-04-19-C1-controlled/resources.png)
+
 ## Where The Positive Result Appeared
 
 The benchmark pivot changed the regime to more closely match the paper's favorable conditions:
@@ -193,6 +202,8 @@ That is an `8.6x` `p99` win versus the best baseline.
 
 ![C2 E-B Algorithm Behavior](benchmark/results/screenshots/2026-04-20-C2-eb/algorithm-behavior.png)
 
+![C2 E-B Resources](benchmark/results/screenshots/2026-04-20-C2-eb/resources.png)
+
 ### C3 on E-B
 
 | algorithm | E-B p99 ms | E-B p99.9 ms |
@@ -206,6 +217,8 @@ That is a `6.8x` `p99` win versus the best baseline.
 ![C3 E-B Request Overview](benchmark/results/screenshots/2026-04-20-C3-eb/request-overview.png)
 
 ![C3 E-B Probe System](benchmark/results/screenshots/2026-04-20-C3-eb/probe-system.png)
+
+![C3 E-B Algorithm Behavior](benchmark/results/screenshots/2026-04-20-C3-eb/algorithm-behavior.png)
 
 Throughput is effectively tied. The win is not in the median. It is in the tail.
 
