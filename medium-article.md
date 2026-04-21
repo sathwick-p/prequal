@@ -12,7 +12,7 @@ Round-robin is the default for a reason: it's simple, it's stateless, it's hard 
 
 Least-connections is one step better: it tracks how many requests it has in flight to each backend and prefers the less loaded ones. But it's still inferring backend state from its own bookkeeping. If a backend stops dequeuing requests but the connections look open from the load balancer's perspective, least-connections will keep sending traffic at it for a while.
 
-The class of failure that hurts you in production usually isn't "a backend is dead" — health checks catch that. It's "a backend is alive but materially slower than its peers, and the load balancer can't see the difference." When that happens, the symptom shows up in your p99, not your median.
+The class of failure that hurts you in production usually isn't "a backend is dead", health checks catch that. It's "a backend is alive but materially slower than its peers, and the load balancer can't see the difference." When that happens, the symptom shows up in your p99, not your median.
 
 ## The probe-driven idea
 
@@ -22,9 +22,11 @@ The selection step matters. The naive choice is "pick the lowest latency," but t
 
 This is the core of a paper called Prequal (NSDI '24). I won't recap the whole thing here, but the idea generalizes: probe + RIF-aware selection beats blind distribution in regimes where backend variance matters.
 
+![Probe-driven load balancer, overall shape](benchmark/diagrams/system-overview.png)
+
 ## Skeleton in Go
 
-Let's get the shape down. You need four things.
+You need four things.
 
 ### 1. A way to know what your backends are
 
@@ -93,6 +95,8 @@ The "drop on full queue" path is important. Instrument it as a metric. You will 
 ### 3. A selection function
 
 This is the algorithm. The full HCL version is maybe 30 lines:
+
+![Hot-cold lexicographic selection at a glance](benchmark/diagrams/backend-selection.png)
 
 ```go
 func (pool *ProbePool) Select(allBackends []*Endpoint) (*ProbeEntry, error) {
@@ -187,9 +191,11 @@ What does produce that kind of swing? Run-to-run state contamination.
 
 ## The benchmark trap
 
+![From wrong result to bounded conclusion](benchmark/diagrams/benchmarking.png)
+
 When you run three reps of prequal in a row, the second rep starts with a probe pool warmed up by the first rep. That pool has data about which backends were fast and slow during the previous run. Some of that data is still relevant; some of it isn't. The interaction with the algorithm's "reuse this probe up to N times" behavior is non-trivial.
 
-Then when you switch to round-robin, you're starting fresh — round-robin has no probe pool to warm. You're not comparing algorithms on equal footing. You're comparing "algorithm with stale state" against "algorithm with no state."
+Then you switch to round-robin and you're starting fresh. Round-robin has no probe pool to warm. You're not comparing algorithms on equal footing. You're comparing "algorithm with stale state" against "algorithm with no state."
 
 The fix isn't a code change. It's a protocol change.
 
@@ -224,32 +230,36 @@ When I reran the same heterogeneous workload with this protocol, no code changes
 
 That's a 56× p99 reduction on prequal. The algorithm code was correct the entire time.
 
+![What the tail separation actually looks like on a dashboard](benchmark/results/screenshots/2026-04-20-C2-eb/request-overview.png)
+
+The bands in that screenshot are five reps each of prequal, round-robin, and least-connections, interleaved, on the paper-aligned regime (16 backends, heterogeneous). p50 is identical for all three. Only the tail separates.
+
 ## What to measure besides p99
 
-p99 alone will mislead you. A few other things you should be capturing per run:
+p99 alone will mislead you. A few other things you should be capturing per run.
 
-**Per-backend selection rate.** If your "smart" load balancer is supposed to avoid a slow backend, prove that it actually is. Export a counter incremented on every selection, labeled by backend address. If the slow backend is still receiving 25% of traffic, your algorithm isn't doing what you think.
+Per-backend selection rate. If your "smart" load balancer is supposed to avoid a slow backend, prove that it actually is. Export a counter incremented on every selection, labeled by backend address. If the slow backend is still receiving 25% of traffic, your algorithm isn't doing what you think.
 
-**Random-fallback rate.** Most probe-driven algorithms have a "pool is empty, just pick randomly" fallback path. If the pool is consistently empty (because your probe rate is too low, or your prober is dropping work, or your backends are returning errors), your algorithm has silently degenerated into random selection. You will not catch this from p99 alone. Instrument it.
+Random-fallback rate. Most probe-driven algorithms have a "pool is empty, just pick randomly" fallback path. If the pool is consistently empty because your probe rate is too low, or your prober is dropping work, or your backends are returning errors, your algorithm has silently degenerated into random selection. You will not catch this from p99 alone. Instrument it.
 
-**Throughput.** If your algorithm gets a great p99 but achieves it by serving fewer requests, you haven't won anything. Closed-loop benchmarks make this especially easy to miss because each VU paces itself based on response time.
+Throughput. If your algorithm gets a great p99 but achieves it by serving fewer requests, you haven't won anything. Closed-loop benchmarks make this especially easy to miss because each VU paces itself based on response time.
 
-**Run-to-run variance, not just medians.** If your worst rep is 5× your best rep, your median doesn't mean what you think. Always report the min and max across reps.
+Run-to-run variance, not just medians. If your worst rep is 5× your best rep, your median doesn't mean what you think. Always report the min and max across reps.
 
 ## The regime question
 
 Here's the one that surprised me most. Even after fixing the methodology, my implementation didn't always win.
 
-On a small fleet (4 backends) with CPU-bound work (SHA256 loops on the backends), the probe-driven version was about 25% slower on throughput than round-robin and slightly worse on p99. Profiling the load balancer found nothing — no hot path, no mutex contention, no allocation pressure. The cost was somewhere else.
+On a small fleet (4 backends) with CPU-bound work (SHA256 loops on the backends), the probe-driven version was about 25% slower on throughput than round-robin and slightly worse on p99. Profiling the load balancer found nothing. No hot path, no mutex contention, no allocation pressure. The cost was somewhere else.
 
 The somewhere else turned out to be the backends themselves. Probe traffic competes with user traffic for backend CPU. Each probe is cheap on your side and non-trivial on the backend side. With 4 backends running a CPU-bound workload, the aggregate probe load was eating about 25% of the headroom, and your users felt it as latency.
 
-When I swapped the backends to I/O-bound work (sleep instead of SHA256 — same response time, no CPU contention), the overhead disappeared entirely and the algorithm started winning. Same code, same configuration, different regime.
+When I swapped the backends to I/O-bound work (sleep instead of SHA256, same response time but without the CPU competition), the overhead disappeared entirely and the algorithm started winning. Same code, same configuration, different regime.
 
-This is the part nobody puts in the README of their cool new load balancer. **Probe-driven load balancing is regime-specific.** It needs:
+This is the part nobody puts in the README of their cool new load balancer. Probe-driven load balancing is regime-specific. It needs:
 
 - Enough backends for probe-sampling to give you real information (probably 8+ minimum, more is better)
-- Heterogeneity in the backends — if everyone is identical, there's nothing to discriminate
+- Heterogeneity in the backends. If everyone is identical, there's nothing to discriminate
 - Backends where probe overhead isn't competing with user traffic for the same scarce resource
 - A workload where tail latency actually matters more than peak throughput
 
@@ -263,7 +273,7 @@ Build the metrics before the algorithm, not after. The per-backend selection cou
 
 Treat per-route isolation as a correctness requirement, not a feature. Sharing probe state across routes is a real bug that's invisible in single-route benchmarks. You'll only catch it after you've shipped.
 
-Write down hypotheses before touching code when a benchmark surprises you. The catastrophic first result I got could have sent me on a multi-day code hunt. What stopped me was the variance shape — and I only noticed the variance because I had the discipline to look at min/max instead of just median.
+Write down hypotheses before touching code when a benchmark surprises you. The catastrophic first result I got could have sent me on a multi-day code hunt. What stopped me was the variance shape, and I only noticed the variance because I had the discipline to look at min/max instead of just median.
 
 Pair every positive result with the regime it lives in. "Algorithm X is better than algorithm Y" is a meaningless sentence. "Algorithm X is better than algorithm Y on heterogeneous fleets of 16+ backends with I/O-bound service times" is meaningful.
 
