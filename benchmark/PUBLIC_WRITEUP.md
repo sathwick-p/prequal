@@ -1,6 +1,6 @@
 # Prequal In Practice: A Regime-Specific Tail-Latency Win
 
-This is the public-facing summary of the frozen prequal benchmark campaign. It is derived from [`REPORT.md`](REPORT.md), which remains the canonical technical conclusion.
+This is the public-facing summary of the frozen prequal benchmark campaign. It is derived from [`REPORT.md`](REPORT.md), which remains the canonical technical conclusion. Published version on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062).
 
 ## TL;DR
 

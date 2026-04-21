@@ -15,7 +15,7 @@ The full campaign plan (scenarios × algorithms × environments) is tracked in
 Frozen conclusion docs:
 
 - [`benchmark/REPORT.md`](REPORT.md) — canonical technical conclusion
-- [`benchmark/PUBLIC_WRITEUP.md`](PUBLIC_WRITEUP.md) — public-facing summary built from the frozen report
+- [`benchmark/PUBLIC_WRITEUP.md`](PUBLIC_WRITEUP.md) — public-facing summary built from the frozen report (published on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062))
 
 ## Manifests
 

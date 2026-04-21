@@ -18,7 +18,7 @@ The negative side: on a 4-backend CPU-bound workload with closed-loop 30 VUs, `p
 
 I'm not claiming `prequal` is a universal improvement, I'm not claiming same-host testbed evidence substitutes for cross-infrastructure proof, and I'm not claiming this is a finished production ingress.
 
-The locked-down technical conclusion lives at [`benchmark/REPORT.md`](benchmark/REPORT.md). Longer narrative in [`TECHNICAL_BLOG.md`](TECHNICAL_BLOG.md). Short public summary in [`benchmark/PUBLIC_WRITEUP.md`](benchmark/PUBLIC_WRITEUP.md).
+The locked-down technical conclusion lives at [`benchmark/REPORT.md`](benchmark/REPORT.md). Longer narrative on my blog: [sathwick.xyz/blog/prequal.html](https://sathwick.xyz/blog/prequal.html). Short public summary on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062).
 
 ![prequal System Overview](benchmark/diagrams/system-overview.png)
 
@@ -146,8 +146,8 @@ The runtime is one Go binary that handles both reconciliation and the proxy, plu
 
 - Paper: [Wydrowski et al., NSDI '24, "Load is not what you should balance: Introducing Prequal"](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)
 - Locked-down technical conclusion: [`benchmark/REPORT.md`](benchmark/REPORT.md)
-- Public summary: [`benchmark/PUBLIC_WRITEUP.md`](benchmark/PUBLIC_WRITEUP.md)
-- Longer narrative: [`TECHNICAL_BLOG.md`](TECHNICAL_BLOG.md)
+- Public summary on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062)
+- Longer narrative on my blog: [sathwick.xyz/blog/prequal.html](https://sathwick.xyz/blog/prequal.html)
 - Full evidence matrix: [`benchmark/benchmarking-matrix.md`](benchmark/benchmarking-matrix.md)
 - Why the first `C2` result was wrong: [`benchmark/investigations/2026-04-19-c2-tail-spike.md`](benchmark/investigations/2026-04-19-c2-tail-spike.md)
 - How the regime pivot came together: [`benchmark/investigations/2026-04-20-regime-pivot.md`](benchmark/investigations/2026-04-20-regime-pivot.md)
