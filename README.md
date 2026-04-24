@@ -1,8 +1,10 @@
 # prequal
 
-A Kubernetes ingress controller that implements the Prequal load-balancing algorithm from NSDI '24, along with the full benchmark trail that got the result out of me.
+A Go reimplementation of **Prequal**, the probe-driven load-balancing algorithm from Wydrowski et al., [NSDI '24](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf), which Google deploys across 20+ services including YouTube's serving stack. Packaged as a Kubernetes ingress controller, with the benchmark trail.
 
-In the regime the paper describes, this implementation cuts `p99` tail latency by about `10x` compared to `round-robin` and `least-connections`. In a smaller CPU-bound regime it loses by roughly 25% and I didn't try to hide that. The investigation log explains why an early version of the experiment made the algorithm look catastrophically wrong before I fixed the methodology.
+> The repo reimplements the algorithm. It is not Google's Stubby-based production code and has no production history.
+
+In the paper-aligned regime, this implementation cuts `p99` tail latency by about `10x` compared to `round-robin` and `least-connections`. In a smaller CPU-bound regime it loses by roughly `25%`. The result is regime-specific and the negative case is in the matrix next to the positive one. An earlier version of the same experiment made the algorithm look `10×` *worse*, not better, before I fixed the benchmark protocol: the investigation log walks the seven competing hypotheses and shows the methodology fix produced a `56×` p99 reduction with zero algorithm code changed. That trail is the part of the repo I'd recommend reading even if you don't care about load balancers.
 
 ![Prequal vs baselines, C2 heterogeneous open-loop on E-B](benchmark/results/screenshots/2026-04-20-C2-eb/request-overview.png)
 
@@ -145,6 +147,7 @@ The runtime is one Go binary that handles both reconciliation and the proxy, plu
 ## Read further
 
 - Paper: [Wydrowski et al., NSDI '24, "Load is not what you should balance: Introducing Prequal"](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)
+- **How this implementation diverges from the paper (and why):** [`benchmark/paper-divergences.md`](benchmark/paper-divergences.md)
 - Locked-down technical conclusion: [`benchmark/REPORT.md`](benchmark/REPORT.md)
 - Public summary on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062)
 - Longer narrative on my blog: [sathwick.xyz/blog/prequal.html](https://sathwick.xyz/blog/prequal.html)

@@ -2,6 +2,10 @@
 
 This is the public-facing summary of the frozen prequal benchmark campaign. It is derived from [`REPORT.md`](REPORT.md), which remains the canonical technical conclusion. Published version on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062).
 
+**What this is.** A Go reimplementation of **Prequal** (Wydrowski et al., [NSDI '24](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)), the load-balancing algorithm Google deploys across 20+ services including YouTube's serving stack, packaged as a Kubernetes ingress controller. The repo reimplements the algorithm; it is not Google's production code.
+
+The rest of this document is the frozen benchmark result. Two things are worth flagging before the numbers: the first C2 run made the algorithm look `10×` *worse*, not better, and the investigation log at [`investigations/2026-04-19-c2-tail-spike.md`](investigations/2026-04-19-c2-tail-spike.md) walks the seven competing hypotheses before closing on methodology (a protocol fix produced a `56×` p99 reduction with zero algorithm code changed). Every parameter divergence between this implementation and the paper is tracked in [`paper-divergences.md`](paper-divergences.md).
+
 ## TL;DR
 
 Here is the bounded claim we can support:
