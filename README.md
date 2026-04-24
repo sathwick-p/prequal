@@ -121,7 +121,7 @@ RESET_CONTROLLER=1 POOL_RESET_WARMUP_SEC=15 \
 benchmark/scripts/run_interleaved_campaign.sh
 ```
 
-When it finishes, `benchmark/results/aggregated/` has the per-algorithm `median[min-max]` summaries and the Grafana dashboards can be re-exported to PNG with [`benchmark/scripts/render_dashboards.sh`](benchmark/scripts/render_dashboards.sh). For `C1` and `C3` see the corresponding sections in [`benchmark/benchmarking-matrix.md`](benchmark/benchmarking-matrix.md).
+When it finishes, `benchmark/results/aggregated/` has the per-algorithm `median[min-max]` summaries and the Grafana dashboards can be re-exported to PNG with [`benchmark/scripts/render_dashboards.sh`](benchmark/scripts/render_dashboards.sh). For `C1` and `C3` see the corresponding sections in [`benchmark/REPORT.md`](benchmark/REPORT.md#8-campaign-matrix).
 
 ## What's inside
 
@@ -147,11 +147,11 @@ The runtime is one Go binary that handles both reconciliation and the proxy, plu
 ## Read further
 
 - Paper: [Wydrowski et al., NSDI '24, "Load is not what you should balance: Introducing Prequal"](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)
-- **How this implementation diverges from the paper (and why):** [`benchmark/paper-divergences.md`](benchmark/paper-divergences.md)
+- **How this implementation diverges from the paper (and why):** [`benchmark/REPORT.md` §7](benchmark/REPORT.md#7-paper-divergences)
 - Locked-down technical conclusion: [`benchmark/REPORT.md`](benchmark/REPORT.md)
 - Public summary on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062)
 - Longer narrative on my blog: [sathwick.xyz/blog/prequal.html](https://sathwick.xyz/blog/prequal.html)
-- Full evidence matrix: [`benchmark/benchmarking-matrix.md`](benchmark/benchmarking-matrix.md)
+- Full evidence matrix: [`benchmark/REPORT.md` §8](benchmark/REPORT.md#8-campaign-matrix)
 - Why the first `C2` result was wrong: [`benchmark/investigations/2026-04-19-c2-tail-spike.md`](benchmark/investigations/2026-04-19-c2-tail-spike.md)
 - How the regime pivot came together: [`benchmark/investigations/2026-04-20-regime-pivot.md`](benchmark/investigations/2026-04-20-regime-pivot.md)
 - Where the `25%` overhead actually lives: [`benchmark/investigations/2026-04-20-prequal-overhead-profiling.md`](benchmark/investigations/2026-04-20-prequal-overhead-profiling.md)

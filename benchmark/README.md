@@ -9,13 +9,7 @@ This directory contains reproducible benchmark assets for the ingress proxy:
 - a local Prometheus + Grafana observability stack
 - a campaign runner, result collector, archiver, and report templates
 
-The full campaign plan (scenarios × algorithms × environments) is tracked in
-[`benchmark/benchmarking-matrix.md`](benchmarking-matrix.md).
-
-Frozen conclusion docs:
-
-- [`benchmark/REPORT.md`](REPORT.md) — canonical technical conclusion
-- [`benchmark/PUBLIC_WRITEUP.md`](PUBLIC_WRITEUP.md) — public-facing summary built from the frozen report (published on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062))
+The full campaign plan (scenarios × algorithms × environments), technical conclusion, paper divergences, and publication standards all live in the single canonical document [`benchmark/REPORT.md`](REPORT.md). The public-facing summary was published on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062).
 
 ## Manifests
 
@@ -368,7 +362,7 @@ For campaign-level comparison across multiple runs, fill in
 the same backend image, same k6 scripts, and same workload shapes through a mainstream
 ingress controller, you get a proxy-cost floor that makes prequal tail-latency results
 interpretable as algorithm effect rather than ingress-layer overhead. This is Claim-Level-B
-evidence per `benchmark/public-claim-playbook.md` section 13.
+evidence per [`benchmark/REPORT.md` §9.6](REPORT.md#96-external-baseline).
 
 ### Install the NGINX controller
 

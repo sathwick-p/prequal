@@ -5,9 +5,9 @@
 <!-- Fill in after reviewing all runs in this campaign. -->
 
 Summary of findings across all scenarios and algorithms. Reference the claim level
-supported by this evidence set (see public-claim-playbook.md section 2).
+supported by this evidence set (see [`REPORT.md` §9.1](../../REPORT.md#91-claim-levels)).
 
-Recommended public wording (from public-claim-playbook.md section 17):
+Recommended public wording (from [`REPORT.md` §9.8](../../REPORT.md#98-recommended-public-wording)):
 
 > In our ingress-controller implementation and benchmark setup, `prequal` improved
 > tail latency over `round-robin` and `least-connections` under heterogeneous backend load.
@@ -71,7 +71,7 @@ Recommended public wording (from public-claim-playbook.md section 17):
 
 ## Public-Safe Wording
 
-From public-claim-playbook.md section 17:
+From [`REPORT.md` §9.8](../../REPORT.md#98-recommended-public-wording):
 
 **Safe:**
 > In our ingress-controller implementation and benchmark setup, `prequal` improved tail

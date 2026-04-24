@@ -203,7 +203,7 @@ C3 heterogeneous-ramp (100→1500 rps, 5 reps, IO-bound, skew=16):
 
 **Advantage reproduces on E-B.** Prequal clears the decision rule's 2× threshold in both campaigns. Round-robin and least-connections remain pinned near the 800 ms queue-to-slow-backend floor in both environments. The 1.1–1.2× shrinkage in advantage ratio (10.0→8.6 on C2, 7.1→6.8 on C3) is within the noise of either environment's own min-max range.
 
-This is **Claim-Level-B-adjacent evidence**: reproducible across two cluster topologies on the same host, with consistent baselines, under a controlled protocol. A real Claim-Level-B writeup would still want cross-environment data from an independent cloud or bare-metal cluster (different kernel, different network fabric, different CPU architecture), which `benchmark/public-claim-playbook.md` section 13 calls out. But the "2 environments minimum" bar from section 6 is now met on this testbed.
+This is **Claim-Level-B-adjacent evidence**: reproducible across two cluster topologies on the same host, with consistent baselines, under a controlled protocol. A real Claim-Level-B writeup would still want cross-environment data from an independent cloud or bare-metal cluster (different kernel, different network fabric, different CPU architecture), which [`benchmark/REPORT.md` §9.6](../REPORT.md#96-external-baseline) calls out. But the "2 environments minimum" bar from §9.4 is now met on this testbed.
 
 ### 8.4 Artifacts
 
