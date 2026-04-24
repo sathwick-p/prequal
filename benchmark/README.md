@@ -11,6 +11,8 @@ This directory contains reproducible benchmark assets for the ingress proxy:
 
 The full campaign plan (scenarios × algorithms × environments), technical conclusion, paper divergences, and publication standards all live in the single canonical document [`benchmark/REPORT.md`](REPORT.md). The public-facing summary was published on Medium: [I built a custom load balancer in Go — the hardest part wasn't the code](https://medium.com/@sathwick.p7/i-built-a-custom-load-balancer-in-go-the-hardest-part-wasnt-the-code-2774a614a062).
 
+These benchmark assets exist for a specific reason: Prequal is not just a paper algorithm, it is the load-balancing approach Google describes using across 20+ services, including YouTube's serving stack. This repo is not that production system, but this harness is built to let you study the same core idea in an open implementation and see where it does and does not reproduce the paper's behavior.
+
 ## Manifests
 
 - `benchmark/manifests/controller-benchmark.yaml`

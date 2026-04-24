@@ -4,6 +4,8 @@ This is the single document for the frozen Prequal benchmark campaign — techni
 
 **Paper:** Wydrowski, Kleinberg, Rumble, Archer. *Load is not what you should balance: Introducing Prequal.* [NSDI '24](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf).
 
+**Why this matters.** Prequal is not just an academic algorithm on paper: Google reports deploying it across 20+ services, including YouTube's serving stack. That production provenance is the reason this repo exists.
+
 **What this is.** A Go reimplementation of Prequal, packaged as a Kubernetes ingress controller. The repo reimplements the algorithm; it is not Google's Stubby-based production code.
 
 ---

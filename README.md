@@ -1,8 +1,10 @@
 # prequal
 
-A Go reimplementation of **Prequal**, the probe-driven load-balancing algorithm from Wydrowski et al., [NSDI '24](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf), which Google deploys across 20+ services including YouTube's serving stack. Packaged as a Kubernetes ingress controller, with the benchmark trail.
+A Go reimplementation of **Prequal**, the probe-driven load-balancing algorithm from Wydrowski et al., [NSDI '24](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf), the same algorithm family Google reports deploying across 20+ services including YouTube's serving stack. This repo packages that Google- and YouTube-proven load-balancing idea as a Kubernetes ingress controller, with the benchmark trail in the open.
 
 > The repo reimplements the algorithm. It is not Google's Stubby-based production code and has no production history.
+
+If the reason you're here is the Google/YouTube connection, that's the right reason: the algorithm itself is production-proven at Google, and this repo is an implementation you can actually read, run, benchmark, and modify.
 
 In the paper-aligned regime, this implementation cuts `p99` tail latency by about `10x` compared to `round-robin` and `least-connections`. In a smaller CPU-bound regime it loses by roughly `25%`. The result is regime-specific and the negative case is in the matrix next to the positive one. An earlier version of the same experiment made the algorithm look `10×` *worse*, not better, before I fixed the benchmark protocol: the investigation log walks the seven competing hypotheses and shows the methodology fix produced a `56×` p99 reduction with zero algorithm code changed. That trail is the part of the repo I'd recommend reading even if you don't care about load balancers.
 
@@ -11,6 +13,12 @@ In the paper-aligned regime, this implementation cuts `p99` tail latency by abou
 The 15 alternating bands are five runs each of `prequal`, `round-robin`, and `least-connections` on the same 16-backend workload. `p50` latency is identical for all three (the fast service time). Only the tail separates: `prequal` sits around `60 ms`, both baselines hover near `800 ms`.
 
 ---
+
+## Why this repo is interesting
+
+Most load-balancer repos are either generic reverse proxies or toy algorithms. This one is built around a production-proven idea from Google and YouTube: use active probing plus latency-and-RIF-aware backend selection to cut tail latency in heterogeneous fleets.
+
+That does not mean this repo is Google's code. It means the paper's core algorithmic idea is already battle-tested at Google's scale, and this repo gives you a concrete Go implementation of that idea to study and experiment with.
 
 ## The bounded claim
 
@@ -76,7 +84,7 @@ The negative result is in the repo on purpose. `prequal` is regime-specific, not
 
 ## What makes this repo different
 
-Most "here's my Prequal implementation" repos publish the algorithm and the happy-path numbers. A few things this one does that most don't.
+Most "here's my Prequal implementation" repos publish the algorithm and the happy-path numbers. A few things this one does that most don't, especially if you care about understanding the Google/YouTube Prequal story in code instead of just reading the paper.
 
 ![Benchmark Story: From Wrong Result to Bounded Conclusion](benchmark/diagrams/benchmarking.png)
 
@@ -139,6 +147,8 @@ types/           shared model types
 ```
 
 The runtime is one Go binary that handles both reconciliation and the proxy, plus a small Rust backend for benchmarking. The backend has an `IO_BOUND_MODE=1` env var that swaps the SHA256 loop for `tokio::time::sleep(iterations × 50µs)` so probes measure actual service time rather than CPU contention. Flipping that one switch is what turned "prequal ties" into "prequal wins by 10x on the tail," which also made me go back and re-check every earlier run I'd taken at face value.
+
+If you want the shortest pitch for the repo, it's this: this is a Go implementation of the load-balancing approach Google says it uses in YouTube, plus enough benchmarking and investigation machinery to understand when that approach helps and when it doesn't.
 
 ## Caveat
 

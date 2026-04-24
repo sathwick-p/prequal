@@ -1,4 +1,6 @@
-# Building a Prequal-Style Load Balancer in Go: From Paper to Kubernetes Controller to Benchmarks
+# I Rebuilt the Load-Balancing Idea Google Uses for YouTube in Go
+
+How a production-proven Google load-balancing algorithm became a Go Kubernetes ingress controller, a benchmark harness, and a surprisingly useful systems project.
 
 The paper behind this project has one of the best titles in systems research: [*Load is not what you should balance: Introducing Prequal*](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf).
 
@@ -13,7 +15,9 @@ Prequal takes a different view. Instead of asking, "Which backend looks least lo
 - selection becomes quantile-based and latency-aware instead of purely load-aware
 - the real win shows up in the tail, not necessarily in average latency
 
-This repository is a Go reimplementation of that idea, packaged as a Kubernetes ingress controller and backed by a fairly serious benchmark harness. It is not Google's production Stubby implementation from the paper. But it is much more than a toy port. It has a control plane, a reverse proxy dataplane, a route-local probe pool, a Rust benchmark backend that exposes Prequal probe metadata, Prometheus metrics, Grafana dashboards, benchmark scripts, investigation logs, and enough failed experiments to make the final results believable.
+This repository is a Go reimplementation of that idea, packaged as a Kubernetes ingress controller and backed by a fairly serious benchmark harness. The reason that is interesting is not just that Prequal is academically elegant. It is that Google says it deploys Prequal across 20+ services, including YouTube's serving stack. In other words, this is not a random load-balancing experiment. It is an open implementation of an algorithm that already has real production credibility behind it.
+
+It is not Google's production Stubby implementation from the paper. But it is much more than a toy port. It has a control plane, a reverse proxy dataplane, a route-local probe pool, a Rust benchmark backend that exposes Prequal probe metadata, Prometheus metrics, Grafana dashboards, benchmark scripts, investigation logs, and enough failed experiments to make the final results believable.
 
 This post is a technical walkthrough of both the paper and this codebase:
 
@@ -31,7 +35,9 @@ I also want to make one thing explicit up front: the most interesting part of th
 
 ## The paper's core idea
 
-The NSDI paper starts from a real production observation: in large multi-tenant systems, balancing CPU evenly across replicas is not the same thing as minimizing latency. A backend can look "lightly loaded" according to a smoothed resource metric and still be a bad place to send the next request because it is on a noisy host, has a growing queue, or has just crossed into a regime where service time gets ugly.
+The NSDI paper starts from a real production observation inside Google: in large multi-tenant systems, balancing CPU evenly across replicas is not the same thing as minimizing latency. A backend can look "lightly loaded" according to a smoothed resource metric and still be a bad place to send the next request because it is on a noisy host, has a growing queue, or has just crossed into a regime where service time gets ugly.
+
+That is part of what makes the paper compelling. The authors are not proposing a clever synthetic algorithm in the abstract. They are describing the load-balancing approach Google says it uses in production, especially in YouTube's serving stack, after living with the failure modes of more conventional strategies.
 
 Prequal's answer is to use two signals:
 
@@ -55,7 +61,7 @@ The paper calls this the hot-cold lexicographic rule, or HCL. In this repo, that
 
 The other big paper idea is async probing. Synchronous probing would put an extra network hop in the critical path of every request. Prequal instead probes off the request path, stores recent probe observations in a bounded pool, and reuses them enough to be cheap without letting them go stale.
 
-That is exactly the design this repository implements.
+That is exactly the design this repository implements. The attraction of the repo is that it takes a load-balancing approach with real Google/YouTube lineage and makes the mechanics inspectable in ordinary Go and Kubernetes code.
 
 ## What this repo actually builds
 
@@ -632,7 +638,7 @@ That is still a 6.8x `p99` improvement.
 
 The selection-rate data explains why. Prequal pushes traffic almost entirely to the fast backends and drives the two slow replicas down to nearly zero selections per second. Round-robin, by definition, keeps giving the slow pair their fair share. Least-connections improves the `p95`, but still reacts too slowly to avoid queueing at the slow replicas, so the tail remains pinned near their service time.
 
-This is the strongest part of the repo's evidence: the mechanism lines up with the result.
+This is the strongest part of the repo's evidence: the mechanism lines up with the result. The Google/YouTube connection is what gets many people through the door, but the reason to trust the repo is that the observed behavior matches the mechanism the paper describes.
 
 ### The win is in the tail, not the center
 
@@ -822,7 +828,7 @@ And then it does something more valuable than most reimplementations: it shows t
 
 The final conclusion is stronger because it is narrower.
 
-This implementation of Prequal is not universally better than round-robin or least-connections.
+This implementation of Prequal is not universally better than round-robin or least-connections, even though the underlying algorithm is production-proven at Google and YouTube.
 It loses on a small CPU-bound fleet.
 It wins decisively in a paper-aligned high-skew regime.
 The controller overhead is real but small.
