@@ -5,8 +5,8 @@ This file is a working promo kit for the repo and the blog post.
 Primary angle:
 
 - this is an open Go implementation of the load-balancing idea Google says it uses across 20+ services, including YouTube's serving stack
-- the repo is interesting because it does not just implement the algorithm, it also preserves the full benchmark and investigation trail
-- the technically honest framing is: production-proven idea, independent implementation
+- the repo keeps the full benchmark and investigation trail, not just the algorithm
+- honest framing: production-proven idea, independent implementation
 
 Do not say:
 
@@ -52,7 +52,7 @@ Suggested title:
 Why it fits:
 
 - this is a Kubernetes ingress controller
-- the controller/reconciliation story is real, not incidental
+- there is an actual controller/reconciliation story here, not a thin wrapper
 - the benchmark and route-local balancing state are useful discussion points
 
 Posting note:
@@ -86,7 +86,7 @@ Suggested thread opener:
 Why it fits:
 
 - broad audience for systems-paper-to-code stories
-- the methodology story is strong enough to stand on its own
+- the methodology and failed-benchmark angle carries the post by itself
 - the post can be framed as "building and validating a load balancer from a production paper"
 
 Posting note:
@@ -113,7 +113,7 @@ Posting note:
 
 Suggested title:
 
-`Why Google’s YouTube paper says CPU is the wrong thing to balance`
+`Why Google's YouTube paper says CPU is the wrong thing to balance`
 
 ## Reddit Strategy
 
@@ -256,7 +256,7 @@ Repo:
 
 Title:
 
-`Why Google’s YouTube load-balancing paper says CPU is the wrong thing to balance`
+`Why Google's YouTube load-balancing paper says CPU is the wrong thing to balance`
 
 Body:
 
@@ -325,7 +325,7 @@ Writeup: `BLOG_LINK`
 
 ## X / Twitter Posts
 
-These are intentionally short, simple, and more click-driven. They lean on the Google/YouTube hook without saying something false.
+These are short and lean on the Google/YouTube hook without saying anything false.
 
 ### Project-focused posts
 
@@ -442,8 +442,8 @@ I built an open Go version.
 
 3.
 
-Built a Go load balancer inspired by Google’s YouTube paper.
-Here’s the writeup:
+Built a Go load balancer inspired by Google's YouTube paper.
+Writeup here:
 `BLOG_LINK`
 
 4.
