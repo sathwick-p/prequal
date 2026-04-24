@@ -31,9 +31,19 @@ This post is a technical walkthrough of both the paper and this codebase:
 
 I also want to make one thing explicit up front: the most interesting part of this repo is not just that it implements Prequal. It is that the repo preserves the engineering process of getting to a result you can trust. There are wrong runs, methodological mistakes, a regime pivot, overhead profiling, and a final bounded claim rather than a vague "it worked on my machine." That is rare, and it is worth studying.
 
-![System overview](benchmark/diagrams/system-overview.png)
+![Prequal system overview: a Kubernetes controller watches Ingress and EndpointSlice; the Go reverse proxy selects backends using route-local probe pools; a Rust benchmark backend exposes RIF and latency at /prequal/probe](benchmark/diagrams/system-overview.png)
+
+*Last updated: 2026-04-24*
+
+> **Key Takeaways**
+> - Prequal is a load-balancing algorithm Google reports deploying across 20+ services, including YouTube's serving stack ([NSDI '24 paper](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)).
+> - This Go reimplementation, packaged as a Kubernetes ingress controller, cuts `p99` tail latency by `8.6x` vs round-robin in a paper-aligned heterogeneous regime (16 backends, 16x service-time skew, I/O-bound).
+> - In a small CPU-bound regime (4 backends), the same implementation is roughly `25%` slower than round-robin. The negative case is published alongside the positive one.
+> - The interesting engineering story is not the algorithm itself. It is the benchmark protocol, investigation trail, and regime pivot that turned a `10x`-worse false negative into a bounded, defensible claim.
 
 ## The paper's core idea
+
+Prequal's central claim, from the [NSDI '24 paper](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf), is that the right signal for load balancing is not CPU utilization but expected wait time, and the paper reports that Google runs this approach across 20+ services including YouTube. The algorithm replaces smoothed load metrics with active probes of `requests-in-flight` and `latency`, then uses a hot-cold lexicographic rule on those two signals to pick a backend.
 
 The NSDI paper starts from a real production observation inside Google: in large multi-tenant systems, balancing CPU evenly across replicas is not the same thing as minimizing latency. A backend can look "lightly loaded" according to a smoothed resource metric and still be a bad place to send the next request because it is on a noisy host, has a growing queue, or has just crossed into a regime where service time gets ugly.
 
@@ -206,6 +216,8 @@ The flow is:
 
 That is all in one request handler, which makes the architecture easy to follow.
 
+![Request-path sequence diagram: Client sends a request to the Prequal proxy, the router matches host and path into a routeKey, the proxy triggers an async probe (dashed) and simultaneously selects from the route-local pool using the hot-cold lexicographic rule, forwards to the chosen backend, increments RIF, and records latency and metrics](benchmark/diagrams/sequence.png)
+
 The selection branch is especially important:
 
 ```go
@@ -281,6 +293,8 @@ That gives the repo three protection mechanisms against stale decisions:
 - cap how many probe samples are retained
 - remove entries that are too old in wall-clock terms
 - remove entries once they have been reused enough
+
+![Probe-pool lifecycle: a ProbeEntry with backend, RIF, latency, timestamp, and usesLeft enters a bounded ProbePool keyed by routeKey, is partitioned into cold and hot sets by the RIF quantile threshold, and is evicted when it ages out, when usesLeft hits zero, or when the pool is full](benchmark/diagrams/probe.png)
 
 ### HCL in code
 
@@ -533,6 +547,8 @@ Only the backend selection rule changes.
 
 The repo's investigation logs show something important: methodology was part of the result.
 
+<!-- [PERSONAL EXPERIENCE] The methodology fix alone, with zero algorithm code changed, produced a 56x p99 reduction in the E-B heterogeneous run. The seven competing hypotheses are walked in benchmark/investigations/2026-04-19-c2-tail-spike.md. -->
+
 An early heterogeneous run made Prequal look dramatically worse than the baselines. The tempting conclusion would have been that the algorithm or implementation was wrong.
 
 It turned out the main problem was protocol:
@@ -579,11 +595,13 @@ Together, those two tests are enough to answer the important question: does Preq
 
 ## What the benchmark results say
 
-The repo's final claim is deliberately bounded, and I think it is the right one.
+Across five-run interleaved campaigns on a 16-backend cluster with `16x` service-time skew, this Prequal implementation cut `p99` tail latency by `8.6x` against round-robin and `8.5x` against least-connections on an open-loop workload, and by `6.8x` against round-robin on a rate ramp. On a small 4-backend CPU-bound workload, the same implementation was roughly `25%` slower than round-robin on throughput. The repo's final claim is deliberately bounded, and I think it is the right one.
 
 ### Small CPU-bound fleet: Prequal loses
 
 In the small-fleet CPU-bound regime, this implementation does not win.
+
+<!-- [ORIGINAL DATA] C1 benchmark run captured in benchmark/REPORT.md, same controller binary across three algorithms, interleaved protocol. -->
 
 The report's C1 numbers are:
 
@@ -615,6 +633,8 @@ The story changes once the benchmark is moved closer to the paper's assumptions:
 - 16x service-time skew
 - I/O-bound backend mode
 - open-loop and ramp traffic
+
+<!-- [ORIGINAL DATA] E-B heterogeneous open-loop and ramp campaigns, 5 reps per algorithm, interleaved order, controller rollout-restart per run. Raw results in benchmark/results/, frozen summary in benchmark/REPORT.md. -->
 
 In the E-B heterogeneous open-loop campaign, the median `p99` numbers are:
 
@@ -648,7 +668,7 @@ That is exactly what you would expect if the algorithm is avoiding pathological 
 
 It is also why Prequal is interesting. If your median is already fine, the only remaining reason to build a more sophisticated load balancer is to keep a minority of requests from getting stuck behind bad backend choices.
 
-![Backend selection](benchmark/diagrams/backend-selection.png)
+![Per-backend selection rate under heterogeneous load: Prequal concentrates traffic on the 14 fast replicas and drives the two slow replicas to near-zero selections per second, while round-robin and least-connections continue feeding the slow pair](benchmark/diagrams/backend-selection.png)
 
 ## Where this repo diverges from the paper
 
@@ -811,7 +831,29 @@ The Go code for Prequal itself is not huge. The real work is in everything aroun
 
 That is why this repo is worth reading even if you never deploy this exact controller. It is a good case study in turning a systems paper into an implementation that can survive contact with reality.
 
-![Benchmarking journey](benchmark/diagrams/benchmarking.png)
+![Benchmark evolution timeline: initial C2 run where Prequal looked 10x worse, methodology investigation, controlled interleaved protocol, regime pivot to 16 backends with I/O-bound service time, and final bounded conclusion showing a 6.8x to 8.6x p99 win in the paper-aligned regime](benchmark/diagrams/benchmarking.png)
+
+## FAQ
+
+### What is Prequal and why does it matter?
+
+Prequal is a load-balancing algorithm introduced in the [NSDI '24 paper by Wydrowski et al.](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf) It replaces CPU-based balancing with active probing of two per-backend signals, `requests-in-flight` (RIF) and recent latency, and uses a hot-cold lexicographic rule to pick a backend. The paper reports Google deploys Prequal across 20+ services including YouTube's serving stack, which is why the algorithm has real production credibility rather than just being another academic proposal.
+
+### How does Prequal differ from round-robin or least-connections?
+
+Round-robin rotates through backends regardless of state. Least-connections picks the backend with the fewest in-flight requests. Prequal splits candidates into "cold" and "hot" using a RIF quantile threshold, picks the lowest-latency cold backend when one exists, and only falls back to lowest-RIF when every candidate is hot. That two-stage rule lets latency drive decisions before congestion shows up and queue depth take over once it does.
+
+### When does Prequal lose?
+
+On a small 4-backend CPU-bound fleet, this implementation is roughly `25%` slower than round-robin on throughput. The overhead profiling investigation showed no hot path dominating CPU and negligible mutex contention. The cost is mostly diffuse probe and network work in a regime where the algorithm does not have enough fleet diversity or service-time skew to pay for itself. Prequal is a tail-latency tool, not a small-fleet tool.
+
+### How faithful is this Go implementation to the NSDI paper?
+
+The central mechanisms are faithful: asynchronous probing, route-local probe pools, the hot-cold lexicographic rule, RIF-plus-latency selection. The paper defaults differ in a few places: `Q_RIF = 0.75` here versus `~0.84` in the paper, `probes-per-query = 1.0` here versus `3` in the testbed and `5` in YouTube production, and probe reuse is a fixed constant of `3` rather than a formula-driven value. The repo's frozen report documents every divergence explicitly rather than hiding them.
+
+### Where should I start reading the code?
+
+Start at [`main.go`](main.go) for how the controller, prober, pools, and proxy are wired together. Then read [`loadbalancer/pool/pool.go`](loadbalancer/pool/pool.go) for the HCL selection rule, [`loadbalancer/prober.go`](loadbalancer/prober.go) for async probing, and [`benchmark/REPORT.md`](benchmark/REPORT.md) for the full experimental record. The three investigation logs in `benchmark/investigations/` are worth reading even if you do not plan to deploy the controller.
 
 ## Closing
 
@@ -845,127 +887,3 @@ It is the kind of conclusion you can actually build on.
 - Regime pivot investigation: [`benchmark/investigations/2026-04-20-regime-pivot.md`](benchmark/investigations/2026-04-20-regime-pivot.md)
 - Overhead profiling investigation: [`benchmark/investigations/2026-04-20-prequal-overhead-profiling.md`](benchmark/investigations/2026-04-20-prequal-overhead-profiling.md)
 
-## Suggested New Excalidraw Diagrams
-
-If I were adding more diagrams in the same style as the existing repo visuals, I would add these three.
-
-### 1. Request-path sequence diagram
-
-Purpose: show the exact control flow for one proxied request.
-
-Canvas layout:
-
-- left to right lifelines: `Client`, `Prequal Proxy`, `Router`, `Route Pool`, `Prober Queue`, `Backend`, `Metrics`
-- top to bottom time flow
-
-Flow to draw:
-
-1. `Client -> Prequal Proxy`: `POST /work Host: bench.local`
-2. `Prequal Proxy -> Router`: `Match(host, path)`
-3. `Router -> Prequal Proxy`: `routeKey=prequal-benchmark/bench-heterogeneous:8080`
-4. `Prequal Proxy -> Prober Queue`: `TriggerProbes(routeKey)` as a dashed async arrow
-5. `Prequal Proxy -> Route Pool`: `Select(routeKey)`
-6. Inside Route Pool, show a small inset box:
-   `cold = entries with RIF <= quantile(QRIF)`
-   `pick min latency among cold`
-   `else pick min RIF`
-7. `Route Pool -> Prequal Proxy`: `selected backend`
-8. `Prequal Proxy -> Backend`: proxy request
-9. `Backend -> Prequal Proxy`: response
-10. `Prequal Proxy -> Route Pool`: `IncrementRIF(routeKey, backend)` and later local latency update
-11. `Prequal Proxy -> Metrics`: request duration, backend selection, algorithm counters
-12. `Backend -> Prober Queue`: separate dashed note showing probe worker independently calls `/prequal/probe`
-
-Visual notes:
-
-- solid arrows for request-path work
-- dashed arrows for async probe work
-- highlight the critical path in one color and background probing in another
-
-### 2. Probe-pool lifecycle diagram
-
-Purpose: explain why the pool is bounded and how a probe enters, gets reused, and is evicted.
-
-Canvas layout:
-
-- left side: "probe entry arrives"
-- center: bounded pool box with 6 to 8 sample entries
-- right side: eviction rules
-- bottom: selection path
-
-Elements to draw:
-
-- a box titled `ProbeEntry`
-  fields: `backend`, `RIF`, `latency`, `timestamp`, `usesLeft`
-- arrow into a `ProbePool(routeKey)` container
-- pool container annotated with:
-  `MaxSize = 16`
-  `MaxAge = 1s`
-  `MaxProbeAge = 2s`
-  `ReuseLimit = 3`
-- inside the pool, visually separate "cold" and "hot" entries by color
-- show one selected entry having `usesLeft` decremented
-- show three eviction reasons:
-  - oldest removed when pool is full
-  - stale removed by age
-  - selected entry removed when `usesLeft == 0`
-- include the alternating maintenance removal:
-  `RemoveWorst(): oldest / highest-load alternation`
-
-Visual notes:
-
-- use small badges like `cold`, `hot`, `stale`, `evict`
-- this diagram should feel like a state machine plus data-structure view combined
-
-### 3. Benchmark evolution timeline
-
-Purpose: summarize the experimental journey from wrong result to bounded claim.
-
-Canvas layout:
-
-- one horizontal timeline with four large phases
-- each phase gets a labeled card above or below the line
-
-Phases to draw:
-
-1. `Initial C2 run`
-   note: `Prequal looked 10x worse`
-   icon: red warning triangle
-2. `Methodology investigation`
-   notes:
-   `Sequential runs`
-   `Pool-state leakage`
-   `No reset between reps`
-   icon: magnifying glass
-3. `Controlled protocol`
-   notes:
-   `Interleaved order`
-   `Controller restart per run`
-   `Warmup`
-   `Metadata capture`
-   icon: wrench
-4. `Regime pivot`
-   notes:
-   `16 backends`
-   `14 fast + 2 slow`
-   `IO-bound mode`
-   `16x skew`
-   icon: upward arrow
-5. `Final bounded conclusion`
-   notes:
-   `Prequal loses on small CPU-bound fleet`
-   `Prequal wins 6.8x-8.6x on p99 in paper-aligned regime`
-   icon: checkmark
-
-Add two thin parallel lanes under the timeline:
-
-- `Code changes`
-- `Benchmark protocol changes`
-
-Under `Code changes`, show that the biggest final result shift was not from HCL rewrites but from backend mode and environment shape.
-Under `Benchmark protocol changes`, show that methodology fixes alone removed the false negative.
-
-Visual notes:
-
-- this should read like an engineering postmortem timeline, not a marketing roadmap
-- use neutral colors for protocol changes and stronger colors only for final validated outcomes
