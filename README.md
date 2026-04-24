@@ -303,7 +303,6 @@ If you want the shortest route through the repo:
 - Paper: [*Load is not what you should balance: Introducing Prequal*](https://www.usenix.org/system/files/nsdi24-wydrowski.pdf)
 - Frozen benchmark report: [`benchmark/REPORT.md`](benchmark/REPORT.md)
 - Public technical blog: [sathwick.xyz/blog/prequal.html](https://sathwick.xyz/blog/prequal.html)
-- Technical blog: [`prequal-technical-blog.md`](prequal-technical-blog.md)
 
 ### Then read these
 
